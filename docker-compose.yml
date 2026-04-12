@@ -1,0 +1,41 @@
+services:
+  # Kafka & Zookeeper remain the same as the previous setup...
+  zookeeper:
+    image: bitnami/zookeeper:latest
+    environment:
+      - ALLOW_ANONYMOUS_LOGIN=yes
+
+  kafka:
+    image: bitnami/kafka:latest
+    ports:
+      - "9092:9092"
+    environment:
+      - KAFKA_CFG_ZOOKEEPER_CONNECT=zookeeper:2181
+      - ALLOW_ANONYMOUS_LOGIN=yes
+      - KAFKA_CFG_ADVERTISED_LISTENERS=PLAINTEXT://localhost:9092
+    depends_on:
+      - zookeeper
+
+  # The Producer (Simulates the stream)
+  producer:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile
+    volumes:
+      - .:/app
+    command: python src/entry/producer.py
+    depends_on:
+      - kafka
+
+  # The Consumer (Spark Streaming to Delta Lake)
+  spark-processor:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile
+    volumes:
+      - .:/app
+    # We use 'spark-submit' to handle the heavy lifting
+    command: >
+      python src/entry/consumer.py
+    depends_on:
+      - kafka
