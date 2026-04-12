@@ -5,3 +5,5 @@ pandas
 google-api-python-client
 textblob
 langdetect
+streamlit
+plotly
