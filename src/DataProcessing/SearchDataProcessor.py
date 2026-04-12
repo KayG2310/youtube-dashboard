@@ -60,8 +60,8 @@ class SearchDataProcessor:
         df["view_count"] = df["view_count"].fillna(0)
 
         # 4. Convert timestamps
-        df["published_at"] = pd.to_datetime(df["published_at"], errors="coerce")
-        df["fetched_at"] = pd.to_datetime(df["fetched_at"], errors="coerce")
+        df["published_at"] = pd.to_datetime(df["published_at"], errors="coerce", utc=True)
+        df["fetched_at"] = pd.to_datetime(df["fetched_at"], errors="coerce", utc=True)
 
         # 5. Duration → seconds
         df["duration_sec"] = df["duration"].apply(self.parse_duration)
@@ -78,7 +78,7 @@ class SearchDataProcessor:
         )
 
         df["video_age_days"] = (
-            (pd.Timestamp.now() - df["published_at"]).dt.total_seconds() / 86400
+            (pd.Timestamp.now(tz="UTC") - df["published_at"]).dt.total_seconds() / 86400
         )
 
         df["title_length"] = df["title"].apply(lambda x: len(str(x)))
