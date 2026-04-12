@@ -1,0 +1,32 @@
+[
+    {
+        "category":"Entertainment",
+        "video_count":8,
+        "avg_views":6442119.125,
+        "avg_likes":73087.375
+    },
+    {
+        "category":"Film & Animation",
+        "video_count":6,
+        "avg_views":5441604.333333333,
+        "avg_likes":239713.8333333333
+    },
+    {
+        "category":"Music",
+        "video_count":43,
+        "avg_views":1443743.0697674418,
+        "avg_likes":37309.023255814
+    },
+    {
+        "category":"Gaming",
+        "video_count":31,
+        "avg_views":732572.3225806452,
+        "avg_likes":20291.0967741935
+    },
+    {
+        "category":"People & Blogs",
+        "video_count":7,
+        "avg_views":305319.1428571428,
+        "avg_likes":19404.2857142857
+    }
+]

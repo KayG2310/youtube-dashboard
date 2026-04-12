@@ -55,4 +55,5 @@ print(f"PRESCRIPTIVE ACTION: Creators should post at {recommendation['publish_ho
 
 # --- SAVE CSV FOR DASHBOARD ---
 category_summary.toPandas().to_csv("/app/data/processed/trending_processed.csv", index=False)
+category_summary.toPandas().to_json("/app/data/processed/trending_processed.json", orient="records", indent=4)
 print("Pipeline complete. Processed data saved.")
