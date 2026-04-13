@@ -7,3 +7,4 @@ textblob
 langdetect
 streamlit
 plotly
+statsmodels

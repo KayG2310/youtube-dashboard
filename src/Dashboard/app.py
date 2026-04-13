@@ -3,6 +3,7 @@ import pandas as pd
 import plotly.express as px
 import plotly.graph_objects as go
 import os
+import json
 
 # Set Page Config
 st.set_page_config(page_title="YouTube Comment Analytics", layout="wide", page_icon="📊")
@@ -30,8 +31,19 @@ def load_search_data():
     return df
 
 
+@st.cache_data
+def load_trending_data():
+    base_dir = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+    data_path = os.path.join(base_dir, "data", "processed", "trending_processed.json")
+    if not os.path.exists(data_path):
+        return None
+    with open(data_path, "r") as f:
+        return json.load(f)
+
+
 df = load_comments_data()
 search_df = load_search_data()
+trending_data = load_trending_data()
 
 st.title("📹 YouTube Analytics Dashboard")
 st.markdown("Comment sentiment and engagement, plus search-result video performance.")
@@ -40,7 +52,7 @@ if df is None and search_df is None:
     st.error("No processed data found. Run the processing pipeline first.")
     st.stop()
 
-tab_comments, tab_search = st.tabs(["Comments", "Search analytics"])
+tab_comments, tab_search, tab_trending = st.tabs(["Comments", "Search analytics", "Trending"])
 
 # =============================================================================
 # COMMENTS TAB
@@ -351,6 +363,92 @@ with tab_search:
             show = [c for c in display_cols if c in s.columns]
             tbl = s[show].sort_values(by=sort_search, ascending=False)
             st.dataframe(tbl, use_container_width=True, hide_index=True)
+
+# =============================================================================
+# TRENDING TAB
+# =============================================================================
+with tab_trending:
+    if trending_data is None:
+        st.warning("Trending data not found (`trending_processed.json`).")
+    else:
+        analytics = trending_data["analytics_results"]
+        
+        st.header("YouTube Trending Analytics")
+        
+        # Level 1: Descriptive Analytics
+        st.subheader("📊 Descriptive Analytics: Category Performance")
+        desc_df = pd.DataFrame(analytics["level_1_descriptive"])
+        col1, col2 = st.columns(2)
+        with col1:
+            fig_desc_views = px.bar(
+                desc_df,
+                x="category",
+                y="avg_views",
+                title="Average Views by Category",
+                color="avg_views",
+                color_continuous_scale="Blues",
+            )
+            fig_desc_views.update_layout(xaxis_tickangle=-45)
+            st.plotly_chart(fig_desc_views, use_container_width=True)
+        with col2:
+            fig_desc_likes = px.bar(
+                desc_df,
+                x="category",
+                y="avg_likes",
+                title="Average Likes by Category",
+                color="avg_likes",
+                color_continuous_scale="Greens",
+            )
+            fig_desc_likes.update_layout(xaxis_tickangle=-45)
+            st.plotly_chart(fig_desc_likes, use_container_width=True)
+        
+        st.dataframe(desc_df, use_container_width=True)
+        
+        st.divider()
+        
+        # Level 2: Diagnostic Analytics
+        st.subheader("🔍 Diagnostic Analytics: Correlations")
+        corr = analytics["level_2_diagnostic"]["correlation_views_likes"]
+        st.metric("Correlation between Views and Likes", f"{corr:.3f}")
+        st.markdown(f"**Insight:** Views and likes have a moderate positive correlation of {corr:.3f}.")
+        
+        st.divider()
+        
+        # Level 3: Predictive Analytics
+        st.subheader("🔮 Predictive Analytics: Like Count Predictions")
+        pred_df = pd.DataFrame(analytics["level_3_predictive"])
+        if not pred_df.empty:
+            pred_df["features"] = pred_df["features"].apply(lambda x: x[0] if isinstance(x, list) and x else x)
+            fig_pred = px.scatter(
+                pred_df,
+                x="like_count",
+                y="prediction",
+                title="Actual vs Predicted Likes",
+                labels={"like_count": "Actual Likes", "prediction": "Predicted Likes"},
+                trendline="ols",
+            )
+            st.plotly_chart(fig_pred, use_container_width=True)
+            st.dataframe(pred_df, use_container_width=True)
+        
+        st.divider()
+        
+        # Level 4: Prescriptive Analytics
+        st.subheader("💡 Prescriptive Analytics: Publishing Recommendations")
+        presc = analytics["level_4_prescriptive"]
+        st.metric("Best Publishing Hour", f"{presc['best_publish_hour']}:00")
+        st.info(presc["action"])
+        
+        hourly_df = pd.DataFrame(presc["hourly_trends"])
+        fig_hourly = px.bar(
+            hourly_df,
+            x="publish_hour",
+            y="avg_views",
+            title="Average Views by Publishing Hour",
+            color="avg_views",
+            color_continuous_scale="Oranges",
+        )
+        st.plotly_chart(fig_hourly, use_container_width=True)
+        st.dataframe(hourly_df, use_container_width=True)
 
 st.markdown("---")
 st.caption("Dashboard generated by Antigravity Dashboard Engine. Run with: `streamlit run src/Dashboard/app_dashboard.py`")
