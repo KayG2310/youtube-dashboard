@@ -1,0 +1,127 @@
+{
+    "level_1_descriptive": [
+        {
+            "category": "Sports",
+            "total_videos": 65,
+            "avg_views": 36897649.07692308,
+            "avg_thumbnail_size": 2764800.0
+        },
+        {
+            "category": "Music",
+            "total_videos": 95,
+            "avg_views": 20035347.842105262,
+            "avg_thumbnail_size": 2693861.052631579
+        },
+        {
+            "category": "Entertainment",
+            "total_videos": 117,
+            "avg_views": 18616472.529914528,
+            "avg_thumbnail_size": 2745600.0
+        },
+        {
+            "category": "Comedy",
+            "total_videos": 9,
+            "avg_views": 16713374.666666666,
+            "avg_thumbnail_size": 2515200.0
+        },
+        {
+            "category": "People & Blogs",
+            "total_videos": 147,
+            "avg_views": 12598459.578231292,
+            "avg_thumbnail_size": 2611983.673469388
+        },
+        {
+            "category": "Autos & Vehicles",
+            "total_videos": 1,
+            "avg_views": 8860586.0,
+            "avg_thumbnail_size": 2764800.0
+        },
+        {
+            "category": "Film & Animation",
+            "total_videos": 32,
+            "avg_views": 8635629.40625,
+            "avg_thumbnail_size": 2764800.0
+        },
+        {
+            "category": "Gaming",
+            "total_videos": 108,
+            "avg_views": 5919121.481481481,
+            "avg_thumbnail_size": 2764800.0
+        },
+        {
+            "category": "Education",
+            "total_videos": 83,
+            "avg_views": 2560493.301204819,
+            "avg_thumbnail_size": 2683604.8192771086
+        },
+        {
+            "category": "Science & Technology",
+            "total_videos": 97,
+            "avg_views": 2422998.762886598,
+            "avg_thumbnail_size": 2764800.0
+        },
+        {
+            "category": "Howto & Style",
+            "total_videos": 7,
+            "avg_views": 1456828.2857142857,
+            "avg_thumbnail_size": 2764800.0
+        },
+        {
+            "category": "News & Politics",
+            "total_videos": 89,
+            "avg_views": 211033.77528089887,
+            "avg_thumbnail_size": 2764800.0
+        },
+        {
+            "category": "Travel & Events",
+            "total_videos": 1,
+            "avg_views": 53087.0,
+            "avg_thumbnail_size": 2764800.0
+        },
+        {
+            "category": "Pets & Animals",
+            "total_videos": 1,
+            "avg_views": 12969.0,
+            "avg_thumbnail_size": 2764800.0
+        }
+    ],
+    "level_2_diagnostic": {
+        "view_like_correlation": 0.8458055189426739,
+        "clickbait_thumbnail_correlation": 0.032807398783877895
+    },
+    "level_3_predictive": [
+        {
+            "view_count_feature": 312275.0,
+            "like_count": 15465,
+            "prediction": 48964.932188789004
+        },
+        {
+            "view_count_feature": 366676.0,
+            "like_count": 9408,
+            "prediction": 49672.28349746644
+        },
+        {
+            "view_count_feature": 60240.0,
+            "like_count": 2414,
+            "prediction": 45687.836416973856
+        },
+        {
+            "view_count_feature": 19466013.0,
+            "like_count": 336215,
+            "prediction": 298012.2225026553
+        },
+        {
+            "view_count_feature": 698251.0,
+            "like_count": 20181,
+            "prediction": 53983.601491156245
+        }
+    ],
+    "level_4_prescriptive": {
+        "optimal_hour": 19,
+        "action": "Creators should upload at 19:00 with high-resolution thumbnails to maximize reach."
+    },
+    "big_data_metrics": {
+        "total_records_processed": 852,
+        "thumbnail_data_points": 866
+    }
+}

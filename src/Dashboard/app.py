@@ -41,9 +41,20 @@ def load_trending_data():
         return json.load(f)
 
 
+@st.cache_data
+def load_thumbnail_data():
+    base_dir = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+    data_path = os.path.join(base_dir, "data", "final_analytics_report.json")
+    if not os.path.exists(data_path):
+        return None
+    with open(data_path, "r") as f:
+        return json.load(f)
+
+
 df = load_comments_data()
 search_df = load_search_data()
 trending_data = load_trending_data()
+thumbnail_data = load_thumbnail_data()
 
 st.title("📹 YouTube Analytics Dashboard")
 st.markdown("Comment sentiment and engagement, plus search-result video performance.")
@@ -52,7 +63,7 @@ if df is None and search_df is None:
     st.error("No processed data found. Run the processing pipeline first.")
     st.stop()
 
-tab_comments, tab_search, tab_trending = st.tabs(["Comments", "Search analytics", "Trending"])
+tab_comments, tab_search, tab_trending, tab_thumbnail = st.tabs(["Comments", "Search analytics", "Trending", "Thumbnail"])
 
 # =============================================================================
 # COMMENTS TAB
@@ -449,6 +460,95 @@ with tab_trending:
         )
         st.plotly_chart(fig_hourly, use_container_width=True)
         st.dataframe(hourly_df, use_container_width=True)
+
+# =============================================================================
+# THUMBNAIL ANALYTICS TAB
+# =============================================================================
+with tab_thumbnail:
+    if thumbnail_data is None:
+        st.warning("Thumbnail analytics data not found (`final_analytics_report.json`).")
+    else:
+        analytics = thumbnail_data
+        st.header("YouTube Thumbnail Analytics")
+
+        # Level 1: Descriptive Analytics
+        st.subheader("📊 Descriptive Analytics: Category Performance")
+        desc_df = pd.DataFrame(analytics["level_1_descriptive"])
+        col1, col2 = st.columns(2)
+        with col1:
+            fig_thumb_views = px.bar(
+                desc_df,
+                x="category",
+                y="avg_views",
+                title="Average Views by Category",
+                color="avg_views",
+                color_continuous_scale="Blues",
+            )
+            fig_thumb_views.update_layout(xaxis_tickangle=-45)
+            st.plotly_chart(fig_thumb_views, use_container_width=True)
+        with col2:
+            fig_thumb_videos = px.bar(
+                desc_df,
+                x="category",
+                y="total_videos",
+                title="Total Videos by Category",
+                color="total_videos",
+                color_continuous_scale="Viridis",
+            )
+            fig_thumb_videos.update_layout(xaxis_tickangle=-45)
+            st.plotly_chart(fig_thumb_videos, use_container_width=True)
+        st.dataframe(desc_df, use_container_width=True)
+
+        st.divider()
+
+        # Level 2: Diagnostic Analytics
+        st.subheader("🔍 Diagnostic Analytics: Correlations")
+        diag = analytics["level_2_diagnostic"]
+        col3, col4 = st.columns(2)
+        with col3:
+            st.metric("View-Like Correlation", f"{diag['view_like_correlation']:.3f}")
+        with col4:
+            st.metric("Thumbnail-Clickbait Correlation", f"{diag['clickbait_thumbnail_correlation']:.3f}")
+        st.markdown(
+            f"**Insight:** The thumbnail analysis shows a strong relationship between views and likes, while thumbnail clickbait correlation is {diag['clickbait_thumbnail_correlation']:.3f}."
+        )
+
+        st.divider()
+
+        # Level 3: Predictive Analytics
+        st.subheader("🔮 Predictive Analytics: Like Count Predictions")
+        pred_df = pd.DataFrame(analytics["level_3_predictive"])
+        if not pred_df.empty:
+            fig_thumb_pred = px.scatter(
+                pred_df,
+                x="view_count_feature",
+                y="like_count",
+                size="prediction",
+                hover_data=["prediction"],
+                title="Views vs Actual Likes",
+                labels={"view_count_feature": "View Count Feature", "like_count": "Actual Likes"},
+            )
+            st.plotly_chart(fig_thumb_pred, use_container_width=True)
+            st.dataframe(pred_df, use_container_width=True)
+
+        st.divider()
+
+        # Level 4: Prescriptive Analytics
+        st.subheader("💡 Prescriptive Analytics: Thumbnail Recommendations")
+        presc = analytics["level_4_prescriptive"]
+        st.metric("Optimal Upload Hour", f"{presc['optimal_hour']}:00")
+        st.info(presc["action"])
+
+        st.divider()
+
+        # Big data metrics
+        st.subheader("📈 Big Data Metrics")
+        metrics = analytics.get("big_data_metrics", {})
+        m1, m2 = st.columns(2)
+        with m1:
+            st.metric("Total Records Processed", f"{metrics.get('total_records_processed', 'N/A')}")
+        with m2:
+            st.metric("Thumbnail Data Points", f"{metrics.get('thumbnail_data_points', 'N/A')}")
 
 st.markdown("---")
 st.caption("Dashboard generated by Antigravity Dashboard Engine. Run with: `streamlit run src/Dashboard/app_dashboard.py`")

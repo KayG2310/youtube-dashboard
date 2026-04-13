@@ -23,19 +23,25 @@ services:
       dockerfile: docker/Dockerfile
     volumes:
       - .:/app
-    command: python src/entry/producer.py
+    env_file:
+      - .env
+    tty: true 
+    stdin_open: true
+    command: tail -f /dev/null 
     depends_on:
       - kafka
 
-  # The Consumer (Spark Streaming to Delta Lake)
+  # The Consumer
   spark-processor:
     build:
       context: .
       dockerfile: docker/Dockerfile
     volumes:
       - .:/app
-    # We use 'spark-submit' to handle the heavy lifting
-    command: >
-      python src/entry/consumer.py
+    env_file:
+      - .env
+    tty: true
+    stdin_open: true
+    command: tail -f /dev/null
     depends_on:
       - kafka
