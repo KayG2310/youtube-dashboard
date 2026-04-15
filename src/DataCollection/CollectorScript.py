@@ -1,11 +1,13 @@
 import os
 import time
 import logging
+import json
 import requests
 from datetime import datetime
 
 import pandas as pd
 from googleapiclient.discovery import build
+from googleapiclient.errors import HttpError
 from dotenv import load_dotenv
 
 # -------------------- SETUP --------------------
@@ -18,6 +20,7 @@ if not API_KEY:
 youtube = build("youtube", "v3", developerKey=API_KEY)
 
 logging.basicConfig(level=logging.INFO)
+logging.getLogger("googleapiclient.http").setLevel(logging.ERROR)
 
 # -------------------- PATHS --------------------
 # Maps to /app/data inside the container
@@ -61,7 +64,7 @@ def download_thumbnails(video_items):
         logging.info(f"Downloaded {count} new images to {THUMBNAIL_PATH}")
 
 # -------------------- HELPERS --------------------
-def get_categories(region="IN"):
+def get_categories(region="US"):
     request = youtube.videoCategories().list(part="snippet", regionCode=region)
     response = request.execute()
     return {item["id"]: item["snippet"]["title"] for item in response["items"]}
@@ -114,7 +117,7 @@ def search_videos(query, max_results=100):
         if not next_page_token: break
     return video_ids
 
-def get_trending_videos(region_code="IN", max_results=100):
+def get_trending_videos(region_code="US", max_results=100):
     video_ids = []
     next_page_token = None
     while len(video_ids) < max_results:
@@ -146,8 +149,49 @@ def get_video_comments(video_id, max_results=50):
                 "like_count": c["likeCount"],
                 "author": c["authorDisplayName"]
             })
-    except Exception: pass
+    except HttpError as e:
+        # Skip videos where comments are disabled without noisy warnings.
+        try:
+            error_payload = json.loads(e.content.decode("utf-8"))
+            reason = error_payload["error"]["errors"][0].get("reason")
+            if reason == "commentsDisabled":
+                return pd.DataFrame(comments)
+        except Exception:
+            pass
+    except Exception:
+        pass
     return pd.DataFrame(comments)
+
+
+def append_to_raw_store(df, csv_path, json_path, dedupe_cols=None):
+    """Append new rows to existing CSV/JSON raw files."""
+    if df is None or df.empty:
+        return
+
+    combined = df.copy()
+
+    if os.path.exists(csv_path):
+        try:
+            existing_csv = pd.read_csv(csv_path)
+            combined = pd.concat([existing_csv, combined], ignore_index=True)
+        except Exception as e:
+            logging.warning(f"Could not read existing CSV {csv_path}: {e}")
+
+    if os.path.exists(json_path):
+        try:
+            existing_json = pd.read_json(json_path)
+            combined = pd.concat([existing_json, combined], ignore_index=True)
+        except Exception as e:
+            logging.warning(f"Could not read existing JSON {json_path}: {e}")
+
+    if dedupe_cols:
+        present_cols = [c for c in dedupe_cols if c in combined.columns]
+        if present_cols:
+            combined = combined.drop_duplicates(subset=present_cols, keep="last")
+
+    combined = combined.reset_index(drop=True)
+    combined.to_csv(csv_path, index=False)
+    combined.to_json(json_path, orient="records")
 
 # -------------------- MAIN PIPELINE --------------------
 if __name__ == "__main__":
@@ -159,40 +203,53 @@ if __name__ == "__main__":
     trending_ids = get_trending_videos(max_results=100)
     trending_df = get_video_stats(trending_ids, category_map, download_imgs=True)
     trending_df["source"] = "trending"
-    trending_df.to_json(os.path.join(DATA_PATH, "trending.json"), orient="records")
+    append_to_raw_store(
+        trending_df,
+        os.path.join(DATA_PATH, "trending.csv"),
+        os.path.join(DATA_PATH, "trending.json"),
+        dedupe_cols=["video_id", "fetched_at"],
+    )
 
     # 2. SEARCH (Unified loop for High Volume)
     search_queries = ["gaming", "news", "music", "tech", "vlogs", "movies", "sports", "machine learning"]
     all_search_stats = []
+    all_search_video_ids = set()
 
     for query in search_queries:
         logging.info(f"Processing query: {query}")
         s_ids = search_videos(query, max_results=100)
+        all_search_video_ids.update(s_ids)
         s_df = get_video_stats(s_ids, category_map, download_imgs=True)
         s_df["search_query"] = query
         s_df["source"] = "search"
         
-        # Backward compatibility for your original search.json analysis
-        if query == "machine learning":
-            s_df.to_json(os.path.join(DATA_PATH, "search.json"), orient="records")
-            
         all_search_stats.append(s_df)
         time.sleep(0.5)
 
-    # Master file for Spark Multimodal Analysis
+    # Save all combined search results
     final_search_df = pd.concat(all_search_stats, ignore_index=True)
-    final_search_df.to_json(os.path.join(DATA_PATH, "search_master.json"), orient="records")
+    append_to_raw_store(
+        final_search_df,
+        os.path.join(DATA_PATH, "search.csv"),
+        os.path.join(DATA_PATH, "search.json"),
+        dedupe_cols=["video_id", "search_query", "fetched_at"],
+    )
 
     # 3. COMMENTS
-    logging.info("Collecting comments...")
+    logging.info("Collecting comments for all trending and searched videos...")
     comments_list = []
-    for vid in trending_ids[:20]:
+    comment_video_ids = list(dict.fromkeys(trending_ids + list(all_search_video_ids)))
+    for vid in comment_video_ids:
         c_df = get_video_comments(vid, max_results=50)
         if not c_df.empty: comments_list.append(c_df)
     
     if comments_list:
-        pd.concat(comments_list, ignore_index=True).to_json(
-            os.path.join(DATA_PATH, "comments.json"), orient="records"
+        comments_df = pd.concat(comments_list, ignore_index=True)
+        append_to_raw_store(
+            comments_df,
+            os.path.join(DATA_PATH, "comments.csv"),
+            os.path.join(DATA_PATH, "comments.json"),
+            dedupe_cols=["video_id", "author", "comment_text"],
         )
 
     logging.info("Successfully collected metadata and binary thumbnails.")

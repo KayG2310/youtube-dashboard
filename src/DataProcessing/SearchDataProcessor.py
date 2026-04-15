@@ -1,7 +1,6 @@
 import pandas as pd
 import os
 import re
-from datetime import datetime
 
 
 class SearchDataProcessor:
@@ -32,13 +31,6 @@ class SearchDataProcessor:
 
         return m * 60 + s
 
-    def count_tags(self, tags):
-        """Convert string list → count."""
-        if not isinstance(tags, str):
-            return 0
-        tags = re.sub(r"[\[\]']", "", tags)
-        return len([t for t in tags.split(",") if t.strip() != ""])
-
     # -----------------------------
     # Main Processing
     # -----------------------------
@@ -51,10 +43,7 @@ class SearchDataProcessor:
         # 1. Remove duplicates
         df = df.drop_duplicates(subset=["video_id"])
 
-        # 2. Clean description
-        df["description"] = df["description"].apply(self.clean_text)
-
-        # 3. Handle missing values
+        # 2. Handle missing values
         df["like_count"] = df["like_count"].fillna(0)
         df["comment_count"] = df["comment_count"].fillna(0)
         df["view_count"] = df["view_count"].fillna(0)
@@ -66,10 +55,7 @@ class SearchDataProcessor:
         # 5. Duration → seconds
         df["duration_sec"] = df["duration"].apply(self.parse_duration)
 
-        # 6. Tag count
-        df["tag_count"] = df["tags"].apply(self.count_tags)
-
-        # 7. Feature Engineering
+        # 6. Feature Engineering
         print("Creating features...")
 
         df["engagement"] = (
@@ -83,17 +69,15 @@ class SearchDataProcessor:
 
         df["title_length"] = df["title"].apply(lambda x: len(str(x)))
 
-        # 8. Filtering
+        # 7. Filtering
         df = df[df["view_count"] > 1000]
 
-        # 9. Drop useless columns
+        # 8. Drop useless columns
         df = df.drop(columns=[
-            "tags",
             "duration",
-            "description"
         ], errors="ignore")
 
-        # 10. Save processed data
+        # 9. Save processed data
         print(f"Saving processed data to {self.processed_path}...")
         df.to_csv(self.processed_path, index=False)
 

@@ -21,7 +21,7 @@ spark.sparkContext.setLogLevel("WARN") # Keeps logs clean
 print("Loading Metadata from multiple sources...")
 # Read both JSON files simultaneously 
 df_raw = spark.read.json([
-    "/app/data/raw/search_master.json", 
+    "/app/data/raw/search.json", 
     "/app/data/raw/trending.json"
 ])
 
