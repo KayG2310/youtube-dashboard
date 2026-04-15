@@ -93,27 +93,27 @@
         {
             "view_count_feature": 312275.0,
             "like_count": 15465,
-            "prediction": 48964.932188789004
+            "prediction": 48964.93218878907
         },
         {
             "view_count_feature": 366676.0,
             "like_count": 9408,
-            "prediction": 49672.28349746644
+            "prediction": 49672.2834974665
         },
         {
             "view_count_feature": 60240.0,
             "like_count": 2414,
-            "prediction": 45687.836416973856
+            "prediction": 45687.83641697392
         },
         {
             "view_count_feature": 19466013.0,
             "like_count": 336215,
-            "prediction": 298012.2225026553
+            "prediction": 298012.22250265523
         },
         {
             "view_count_feature": 698251.0,
             "like_count": 20181,
-            "prediction": 53983.601491156245
+            "prediction": 53983.60149115631
         }
     ],
     "level_4_prescriptive": {
