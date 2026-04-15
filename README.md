@@ -1,5 +1,28 @@
 
-
+# FLOW CHART
+```mermaid
+flowchart TD
+    Col[Data Collection\nCollectorScript.py] --> RawDir[(Raw Files)]
+    
+    RawDir --> CmtProc[Comment Processor\nClean, Sentiment, LangDetect]
+    RawDir --> TrdProc[Trending Processor\nSummarize Trending Data]
+    RawDir --> TmbProc[Thumbnail Processor\nImage Analytics]
+    
+    CmtProc --> ProcDir[(Processed CSV & JSON)]
+    TrdProc --> ProcDir
+    TmbProc --> ProcDir
+    
+    RawDir --> Prod[Kafka Producer\nSearchKafkaProducer.py]
+    Prod --> Kafka[(Kafka Broker in Docker)]
+    Kafka --> DeltaProc[Spark Delta Processor\nBronze & Silver Tables]
+    DeltaProc --> DeltaDir[(Silver Delta Tables)]
+    DeltaDir --> DeltaGold[Spark Gold Analysis\nsearch_analysis_delta.py]
+    DeltaGold --> DeltaGoldDir[(Gold Delta Tables)]
+    
+    ProcDir --> Dash[Streamlit Dashboard\napp.py]
+    DeltaDir --> Dash
+    DeltaGoldDir --> Dash
+```
 ### 1. Data Collection (`src/DataCollection`)
 The pipeline starts by collecting data from YouTube (comments, search results, trending videos, and thumbnails). `CollectorScript.py` fetches the raw data and saves it to a `data/raw/` directory.
 
