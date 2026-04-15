@@ -1,38 +1,4 @@
-Ran command: `source /venv/bin/activate`
-Viewed __main__.py:1-115
-Listed directory DataAnalysis
 
-Based on the project's source code and configuration, you are building an end-to-end data pipeline and dashboard for YouTube Analytics. The project orchestrates data extraction, stream/batch processing, analytical reporting, and visualization.
-
-Here is the high-level workflow of what is happening:
-
-```mermaid
-flowchart TD
-    %% Data Collection
-    Col[Data Collection\nCollectorScript.py] --> RawDir[(Raw Files)]
-    
-    %% Processing (Batch)
-    RawDir --> CmtProc[Comment Processor\nClean, Sentiment, LangDetect]
-    RawDir --> TrdProc[Trending Processor\nSummarize Trending Data]
-    RawDir --> TmbProc[Thumbnail Processor\nImage Analytics]
-    
-    CmtProc --> ProcDir[(Processed CSV & JSON)]
-    TrdProc --> ProcDir
-    TmbProc --> ProcDir
-    
-    %% Processing (Streaming via Kafka & Delta Lake)
-    RawDir --> Prod[Kafka Producer\nSearchKafkaProducer.py]
-    Prod --> Kafka[(Kafka Broker in Docker)]
-    Kafka --> DeltaProc[Spark Delta Processor\nBronze & Silver Tables]
-    DeltaProc --> DeltaDir[(Silver Delta Tables)]
-    DeltaDir --> DeltaGold[Spark Gold Analysis\nsearch_analysis_delta.py]
-    DeltaGold --> DeltaGoldDir[(Gold Delta Tables)]
-    
-    %% Dashboard
-    ProcDir --> Dash[Streamlit Dashboard\napp.py]
-    DeltaDir --> Dash
-    DeltaGoldDir --> Dash
-```
 
 ### 1. Data Collection (`src/DataCollection`)
 The pipeline starts by collecting data from YouTube (comments, search results, trending videos, and thumbnails). `CollectorScript.py` fetches the raw data and saves it to a `data/raw/` directory.
