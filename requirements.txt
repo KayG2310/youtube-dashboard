@@ -3,6 +3,8 @@ pyspark==3.5.0
 delta-spark==3.0.0
 pandas
 google-api-python-client
+python-dotenv
+requests
 textblob
 langdetect
 streamlit
