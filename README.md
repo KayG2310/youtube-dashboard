@@ -5,11 +5,9 @@ flowchart TD
     Col[Data Collection\nCollectorScript.py] --> RawDir[(Raw Files)]
     
     RawDir --> CmtProc[Comment Processor\nClean, Sentiment, LangDetect]
-    RawDir --> TrdProc[Trending Processor\nSummarize Trending Data]
     RawDir --> TmbProc[Thumbnail Processor\nImage Analytics]
     
     CmtProc --> ProcDir[(Processed CSV & JSON)]
-    TrdProc --> ProcDir
     TmbProc --> ProcDir
     
     RawDir --> SearchProd[Search Kafka Producer\nSearchKafkaProducer.py]
