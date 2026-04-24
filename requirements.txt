@@ -12,3 +12,6 @@ plotly
 statsmodels
 dotenv 
 requests 
+pillow
+opencv-python
+deltalake

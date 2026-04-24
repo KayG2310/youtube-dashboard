@@ -4,6 +4,7 @@ import plotly.express as px
 import plotly.graph_objects as go
 import os
 import json
+import deltalake
 from pyspark.sql import SparkSession
 
 # Set Page Config
@@ -50,6 +51,29 @@ def load_thumbnail_data():
         return None
     with open(data_path, "r") as f:
         return json.load(f)
+
+
+@st.cache_data
+def load_thumbnail_delta_data():
+    base_dir = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+    delta_path = os.path.join(base_dir, "data", "processed", "silver", "thumbnail")
+    if not os.path.exists(delta_path):
+        return None
+    dt = deltalake.DeltaTable(delta_path)
+    df = dt.to_pandas()
+    
+    # Compute analytics
+    analytics = {
+        "avg_brightness": df["brightness"].mean(),
+        "avg_contrast": df["contrast"].mean(),
+        "avg_colorfulness": df["colorfulness"].mean(),
+        "avg_sharpness": df["sharpness"].mean(),
+        "avg_quality_score": df["thumbnail_quality_score"].mean(),
+        "top_dominant_colors": df["dominant_color"].value_counts().head(10).to_dict(),
+        "brightness_distribution": df["brightness"].describe().to_dict(),
+        "total_thumbnails": len(df)
+    }
+    return {"thumbnail_analysis": analytics}
 
 
 @st.cache_data
@@ -131,6 +155,7 @@ df = load_comments_data()
 search_df = load_search_data()
 trending_data = load_trending_data()
 thumbnail_data = load_thumbnail_data()
+thumbnail_delta_data = load_thumbnail_delta_data()
 search_delta_gold = load_search_delta_gold_data()
 search_delta_silver = load_search_delta_silver_data()
 
@@ -864,14 +889,17 @@ with tab_trending:
 # THUMBNAIL ANALYTICS TAB
 # =============================================================================
 with tab_thumbnail:
+    st.header("YouTube Thumbnail Analytics")
+    
+    # Original Analytics from JSON
     if thumbnail_data is None:
-        st.warning("Thumbnail analytics data not found (`final_analytics_report.json`).")
+        st.warning("Original thumbnail analytics data not found (`final_analytics_report.json`).")
     else:
         analytics = thumbnail_data
-        st.header("YouTube Thumbnail Analytics")
+        #st.subheader("📊 Original Analytics (from JSON)")
 
         # Level 1: Descriptive Analytics
-        st.subheader("📊 Descriptive Analytics: Category Performance")
+        st.markdown("**Descriptive Analytics: Category Performance**")
         desc_df = pd.DataFrame(analytics["level_1_descriptive"])
         col1, col2 = st.columns(2)
         with col1:
@@ -903,7 +931,7 @@ with tab_thumbnail:
         st.divider()
 
         # Level 2: Diagnostic Analytics
-        st.subheader("🔍 Diagnostic Analytics: Correlations")
+        st.markdown("**Diagnostic Analytics: Correlations**")
         diag = analytics["level_2_diagnostic"]
         col3, col4 = st.columns(2)
         with col3:
@@ -917,7 +945,7 @@ with tab_thumbnail:
         st.divider()
 
         # Level 3: Predictive Analytics
-        st.subheader("🔮 Predictive Analytics: Like Count Predictions")
+        st.markdown("**Predictive Analytics: Like Count Predictions**")
         pred_df = pd.DataFrame(analytics["level_3_predictive"])
         if not pred_df.empty:
             fig_thumb_pred = px.scatter(
@@ -935,7 +963,7 @@ with tab_thumbnail:
         st.divider()
 
         # Level 4: Prescriptive Analytics
-        st.subheader("💡 Prescriptive Analytics: Thumbnail Recommendations")
+        st.markdown("**Prescriptive Analytics: Thumbnail Recommendations**")
         presc = analytics["level_4_prescriptive"]
         st.metric("Optimal Upload Hour", f"{presc['optimal_hour']}:00")
         st.info(presc["action"])
@@ -943,13 +971,69 @@ with tab_thumbnail:
         st.divider()
 
         # Big data metrics
-        st.subheader("📈 Big Data Metrics")
+        st.markdown("**Big Data Metrics**")
         metrics = analytics.get("big_data_metrics", {})
         m1, m2 = st.columns(2)
         with m1:
             st.metric("Total Records Processed", f"{metrics.get('total_records_processed', 'N/A')}")
         with m2:
             st.metric("Thumbnail Data Points", f"{metrics.get('thumbnail_data_points', 'N/A')}")
+
+    st.divider()
+
+    # New Analytics from Delta Table
+    if thumbnail_delta_data is None:
+        st.warning("New thumbnail analytics data not found (Silver Delta table).")
+    else:
+        analytics = thumbnail_delta_data["thumbnail_analysis"]
+        # st.subheader("🆕 New Analytics (from Delta Table)")
+
+        # Key Metrics
+        col1, col2, col3, col4 = st.columns(4)
+        with col1:
+            st.metric("Total Thumbnails", analytics["total_thumbnails"])
+        with col2:
+            st.metric("Avg Brightness", f"{analytics['avg_brightness']:.2f}")
+        with col3:
+            st.metric("Avg Contrast", f"{analytics['avg_contrast']:.2f}")
+        with col4:
+            st.metric("Avg Quality Score", f"{analytics['avg_quality_score']:.2f}")
+
+        st.divider()
+
+        # Detailed Metrics
+        st.markdown("**Thumbnail Quality Metrics**")
+        col5, col6 = st.columns(2)
+        with col5:
+            st.metric("Avg Colorfulness", f"{analytics['avg_colorfulness']:.2f}")
+        with col6:
+            st.metric("Avg Sharpness", f"{analytics['avg_sharpness']:.2f}")
+
+        st.divider()
+
+        # Brightness Distribution
+        st.markdown("**Brightness Distribution**")
+        brightness_stats = analytics["brightness_distribution"]
+        st.write(f"**Mean:** {brightness_stats['mean']:.2f}")
+        st.write(f"**Std:** {brightness_stats['std']:.2f}")
+        st.write(f"**Min:** {brightness_stats['min']:.2f}")
+        st.write(f"**Max:** {brightness_stats['max']:.2f}")
+
+        st.divider()
+
+        # Top Dominant Colors
+        st.markdown("**Top Dominant Colors**")
+        colors_df = pd.DataFrame(list(analytics["top_dominant_colors"].items()), columns=["Color", "Count"])
+        fig_colors = px.bar(
+            colors_df,
+            x="Color",
+            y="Count",
+            title="Most Common Dominant Colors in Thumbnails",
+            color="Count",
+            color_continuous_scale="Rainbow",
+        )
+        st.plotly_chart(fig_colors, use_container_width=True)
+        st.dataframe(colors_df, use_container_width=True)
 
 st.markdown("---")
 st.caption("Dashboard generated by Antigravity Dashboard Engine. Run with: `streamlit run src/Dashboard/app_dashboard.py`")
