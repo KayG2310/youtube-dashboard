@@ -12,12 +12,18 @@ flowchart TD
     TrdProc --> ProcDir
     TmbProc --> ProcDir
     
-    RawDir --> Prod[Kafka Producer\nSearchKafkaProducer.py]
-    Prod --> Kafka[(Kafka Broker in Docker)]
-    Kafka --> DeltaProc[Spark Delta Processor\nBronze & Silver Tables]
-    DeltaProc --> DeltaDir[(Silver Delta Tables)]
-    DeltaDir --> DeltaGold[Spark Gold Analysis\nsearch_analysis_delta.py]
-    DeltaGold --> DeltaGoldDir[(Gold Delta Tables)]
+    RawDir --> SearchProd[Search Kafka Producer\nSearchKafkaProducer.py]
+    RawDir --> TrendingProd[Trending Kafka Producer\nTrendingKafkaProducer.py]
+    SearchProd --> Kafka[(Kafka Broker in Docker)]
+    TrendingProd --> Kafka
+    Kafka --> SearchDeltaProc[Search Spark Delta Processor\nBronze & Silver Tables]
+    Kafka --> TrendingDeltaProc[Trending Spark Delta Processor\nBronze & Silver Tables]
+    SearchDeltaProc --> DeltaDir[(Silver Delta Tables)]
+    TrendingDeltaProc --> DeltaDir
+    DeltaDir --> SearchDeltaGold[Search Gold Analysis\nsearch_analysis_delta.py]
+    DeltaDir --> TrendingDeltaGold[Trending Gold Analysis\ntrendingAnalysis/trending_analysis_delta.py]
+    SearchDeltaGold --> DeltaGoldDir[(Gold Delta Tables)]
+    TrendingDeltaGold --> DeltaGoldDir
     
     ProcDir --> Dash[Streamlit Dashboard\napp.py]
     DeltaDir --> Dash
@@ -33,10 +39,24 @@ Once data is collected, several specialized, offline Python scripts run over the
 This clean output is saved as CSV and JSON files in `data/processed/`.
 
 ### 3. Stream Processing & Delta Lake (Docker + Kafka + Spark)
-For search records, the pipeline simulates a real-time data streaming architecture. You have a `docker-compose.yml` file standing up Zookeeper and a Kafka message broker.
-* **Producer (`SearchKafkaProducer.py`)**: Pushes extracted raw search records into Kafka to simulate a real-time stream.
-* **PySpark Processor (`SearchDataProcessorDelta.py`)**: Subscribes to the Kafka stream and processes the data using a "Medallion Architecture". It drops unstructured data into **Bronze Delta Tables**, and transforms/cleans it into **Silver Delta Tables**.
-* **Gold Analytics (`search_analysis_delta.py`)**: Once Silver data is ready, Spark generates your **Gold Delta Tables**. These Tables contain heavily aggregated domain-level insights (e.g., query performance, forecasting predictions, channel leaderboards, etc).
+For search and trending records, the pipeline simulates a real-time data streaming architecture. You have a `docker-compose.yml` file standing up Zookeeper and a Kafka message broker.
+* **Search Producer (`SearchKafkaProducer.py`)**: Pushes extracted raw search records into Kafka topic `youtube.search.raw`.
+* **Trending Producer (`TrendingKafkaProducer.py`)**: Pushes extracted raw trending records into Kafka topic `youtube.trending.raw`.
+* **Search PySpark Processor (`SearchDataProcessorDelta.py`)**: Subscribes to the search Kafka stream and processes the data using a "Medallion Architecture". It writes **Bronze Delta Tables** to `data/raw/bronze/search` and **Silver Delta Tables** to `data/processed/silver/search`.
+* **Trending PySpark Processor (`TrendingDataProcessorDelta.py`)**: Subscribes to the trending Kafka stream and writes **Bronze Delta Tables** to `data/raw/bronze/trending` and **Silver Delta Tables** to `data/processed/silver/trending`.
+* **Search Gold Analytics (`search_analysis_delta.py`)**: Once Search Silver data is ready, Spark generates aggregated **Gold Delta Tables** under `data/analysis/gold/search_analysis`.
+* **Trending Gold Analytics (`trendingAnalysis/trending_analysis_delta.py`)**: Once Trending Silver data is ready, Spark generates aggregated **Gold Delta Tables** under `data/analysis/gold/trending_analysis`.
+
+Docker run order for only the Kafka/Delta part:
+```bash
+docker compose up -d --build
+docker compose exec producer python src/DataCollection/SearchKafkaProducer.py
+docker compose exec producer python src/DataCollection/TrendingKafkaProducer.py
+docker compose exec spark-processor python src/DataProcessing/SearchDataProcessorDelta.py
+docker compose exec spark-processor python src/DataProcessing/TrendingDataProcessorDelta.py
+docker compose exec spark-processor python src/DataAnalysis/searchAnalysis/search_analysis_delta.py
+docker compose exec spark-processor python src/DataAnalysis/trendingAnalysis/trending_analysis_delta.py
+```
 
 ### 4. Interactive Dashboard (`src/Dashboard/app.py`)
 Finally, all this processed structure is brought together. A Streamlit application loads the processed CSVs, JSON, and Delta Lake Tables from disk. It creates a multi-page interactive web UI relying on `plotly` to visualize metrics like audience sentiment distribution, highest correlating engagement variables, and predictive model benchmarks. 

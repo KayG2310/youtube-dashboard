@@ -61,6 +61,18 @@ def build_pipeline_steps(project_root: Path) -> List[PipelineStep]:
             name="Search Delta Gold analysis",
             command=[py, str(project_root / "src" / "DataAnalysis" / "searchAnalysis" / "search_analysis_delta.py")],
         ),
+        PipelineStep(
+            name="Publish trending records to Kafka",
+            command=[py, str(project_root / "src" / "DataCollection" / "TrendingKafkaProducer.py")],
+        ),
+        PipelineStep(
+            name="Trending Delta Bronze/Silver processing",
+            command=[py, str(project_root / "src" / "DataProcessing" / "TrendingDataProcessorDelta.py")],
+        ),
+        PipelineStep(
+            name="Trending Delta Gold analysis",
+            command=[py, str(project_root / "src" / "DataAnalysis" / "trendingAnalysis" / "trending_analysis_delta.py")],
+        ),
     ]
 
 
