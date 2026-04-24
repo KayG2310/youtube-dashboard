@@ -34,16 +34,6 @@ def load_search_data():
 
 
 @st.cache_data
-def load_trending_data():
-    base_dir = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-    data_path = os.path.join(base_dir, "data", "processed", "trending_processed.json")
-    if not os.path.exists(data_path):
-        return None
-    with open(data_path, "r") as f:
-        return json.load(f)
-
-
-@st.cache_data
 def load_thumbnail_data():
     base_dir = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
     data_path = os.path.join(base_dir, "data", "final_analytics_report.json")
@@ -151,13 +141,87 @@ def load_search_delta_silver_data():
     return df
 
 
+@st.cache_data
+def load_trending_delta_gold_data():
+    base_dir = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+    gold_base = os.path.join(base_dir, "data", "analysis", "gold", "trending_analysis")
+    paths = {
+        "descriptive": os.path.join(gold_base, "descriptive"),
+        "diagnostic": os.path.join(gold_base, "diagnostic"),
+        "predictive": os.path.join(gold_base, "predictive"),
+        "prescriptive": os.path.join(gold_base, "prescriptive"),
+        "channel_leaderboard": os.path.join(gold_base, "channel_leaderboard"),
+        "publish_hour_effect": os.path.join(gold_base, "publish_hour_effect"),
+        "video_scoring": os.path.join(gold_base, "video_scoring"),
+    }
+
+    required = ["descriptive", "diagnostic", "predictive", "prescriptive"]
+    if not all(os.path.exists(paths[k]) for k in required):
+        return None
+
+    spark = (
+        SparkSession.builder
+        .appName("TrendingDeltaGoldDashboardReader")
+        .master("local[*]")
+        .config("spark.jars.packages", "io.delta:delta-spark_2.12:3.0.0")
+        .config("spark.sql.extensions", "io.delta.sql.DeltaSparkSessionExtension")
+        .config("spark.sql.catalog.spark_catalog", "org.apache.spark.sql.delta.catalog.DeltaCatalog")
+        .getOrCreate()
+    )
+    spark.sparkContext.setLogLevel("ERROR")
+
+    try:
+        data = {
+            "descriptive": spark.read.format("delta").load(paths["descriptive"]).toPandas(),
+            "diagnostic": spark.read.format("delta").load(paths["diagnostic"]).toPandas(),
+            "predictive": spark.read.format("delta").load(paths["predictive"]).toPandas(),
+            "prescriptive": spark.read.format("delta").load(paths["prescriptive"]).toPandas(),
+            "channel_leaderboard": spark.read.format("delta").load(paths["channel_leaderboard"]).toPandas() if os.path.exists(paths["channel_leaderboard"]) else pd.DataFrame(),
+            "publish_hour_effect": spark.read.format("delta").load(paths["publish_hour_effect"]).toPandas() if os.path.exists(paths["publish_hour_effect"]) else pd.DataFrame(),
+            "video_scoring": spark.read.format("delta").load(paths["video_scoring"]).toPandas() if os.path.exists(paths["video_scoring"]) else pd.DataFrame(),
+        }
+    except Exception:
+        return None
+    finally:
+        spark.stop()
+    return data
+
+
+@st.cache_data
+def load_trending_delta_silver_data():
+    base_dir = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+    silver_path = os.path.join(base_dir, "data", "processed", "silver", "trending")
+    if not os.path.exists(silver_path):
+        return None
+
+    spark = (
+        SparkSession.builder
+        .appName("TrendingDeltaSilverDashboardReader")
+        .master("local[*]")
+        .config("spark.jars.packages", "io.delta:delta-spark_2.12:3.0.0")
+        .config("spark.sql.extensions", "io.delta.sql.DeltaSparkSessionExtension")
+        .config("spark.sql.catalog.spark_catalog", "org.apache.spark.sql.delta.catalog.DeltaCatalog")
+        .getOrCreate()
+    )
+    spark.sparkContext.setLogLevel("ERROR")
+
+    try:
+        df = spark.read.format("delta").load(silver_path).toPandas()
+    except Exception:
+        return None
+    finally:
+        spark.stop()
+    return df
+
+
 df = load_comments_data()
 search_df = load_search_data()
-trending_data = load_trending_data()
 thumbnail_data = load_thumbnail_data()
 thumbnail_delta_data = load_thumbnail_delta_data()
 search_delta_gold = load_search_delta_gold_data()
 search_delta_silver = load_search_delta_silver_data()
+trending_delta_gold = load_trending_delta_gold_data()
+trending_delta_silver = load_trending_delta_silver_data()
 
 st.title("📹 YouTube Analytics Dashboard")
 st.markdown("Comment sentiment and engagement, plus search-result video performance.")
@@ -800,90 +864,222 @@ with tab_search_delta:
 # TRENDING TAB
 # =============================================================================
 with tab_trending:
-    if trending_data is None:
-        st.warning("Trending data not found (`trending_processed.json`).")
-    else:
-        analytics = trending_data["analytics_results"]
-        
-        st.header("YouTube Trending Analytics")
-        
-        # Level 1: Descriptive Analytics
-        st.subheader("📊 Descriptive Analytics: Category Performance")
-        desc_df = pd.DataFrame(analytics["level_1_descriptive"])
-        col1, col2 = st.columns(2)
-        with col1:
-            fig_desc_views = px.bar(
-                desc_df,
-                x="category",
-                y="avg_views",
-                title="Average Views by Category",
-                color="avg_views",
-                labels={"category": "Category", "avg_views": "Average views"},
-                color_continuous_scale="Blues",
-            )
-            fig_desc_views.update_layout(xaxis_tickangle=-45)
-            st.plotly_chart(fig_desc_views, use_container_width=True)
-        with col2:
-            fig_desc_likes = px.bar(
-                desc_df,
-                x="category",
-                y="avg_likes",
-                title="Average Likes by Category",
-                color="avg_likes",
-                labels={"category": "Category", "avg_likes": "Average likes"},
-                color_continuous_scale="Greens",
-            )
-            fig_desc_likes.update_layout(xaxis_tickangle=-45)
-            st.plotly_chart(fig_desc_likes, use_container_width=True)
-        
-        st.dataframe(desc_df, use_container_width=True)
-        
-        st.divider()
-        
-        # Level 2: Diagnostic Analytics
-        st.subheader("🔍 Diagnostic Analytics: Correlations")
-        corr = analytics["level_2_diagnostic"]["correlation_views_likes"]
-        st.metric("Correlation between Views and Likes", f"{corr:.3f}")
-        st.markdown(f"**Insight:** Views and likes have a moderate positive correlation of {corr:.3f}.")
-        
-        st.divider()
-        
-        # Level 3: Predictive Analytics
-        st.subheader("🔮 Predictive Analytics: Like Count Predictions")
-        pred_df = pd.DataFrame(analytics["level_3_predictive"])
-        if not pred_df.empty:
-            pred_df["features"] = pred_df["features"].apply(lambda x: x[0] if isinstance(x, list) and x else x)
-            fig_pred = px.scatter(
-                pred_df,
-                x="like_count",
-                y="prediction",
-                title="Actual vs Predicted Likes",
-                labels={"like_count": "Actual Likes", "prediction": "Predicted Likes"},
-                trendline="ols",
-            )
-            st.plotly_chart(fig_pred, use_container_width=True)
-            st.dataframe(pred_df, use_container_width=True)
-        
-        st.divider()
-        
-        # Level 4: Prescriptive Analytics
-        st.subheader("💡 Prescriptive Analytics: Publishing Recommendations")
-        presc = analytics["level_4_prescriptive"]
-        st.metric("Best Publishing Hour", f"{presc['best_publish_hour']}:00")
-        st.info(presc["action"])
-        
-        hourly_df = pd.DataFrame(presc["hourly_trends"])
-        fig_hourly = px.bar(
-            hourly_df,
-            x="publish_hour",
-            y="avg_views",
-            title="Average Views by Publishing Hour",
-            color="avg_views",
-            labels={"publish_hour": "Publish hour (24h)", "avg_views": "Average views"},
-            color_continuous_scale="Oranges",
+    st.header("YouTube Trending Analytics")
+
+    if trending_delta_silver is not None:
+        t = trending_delta_silver.copy()
+        for col in ("published_at", "fetched_at"):
+            if col in t.columns:
+                t[col] = pd.to_datetime(t[col], errors="coerce", utc=True)
+
+        cat_opts = sorted(t["category"].dropna().unique()) if "category" in t.columns else []
+        selected_categories = st.multiselect(
+            "Categories",
+            options=cat_opts,
+            default=cat_opts,
+            key="trending_delta_categories",
         )
-        st.plotly_chart(fig_hourly, use_container_width=True)
-        st.dataframe(hourly_df, use_container_width=True)
+        min_views = st.number_input(
+            "Minimum view count",
+            min_value=0,
+            value=0,
+            step=10_000,
+            key="trending_delta_min_views",
+        )
+
+        if selected_categories:
+            t = t[t["category"].isin(selected_categories)]
+        if "view_count" in t.columns:
+            t = t[t["view_count"] >= min_views]
+
+        if t.empty:
+            st.warning("No trending videos match the current filters.")
+        else:
+            total_views = int(t["view_count"].sum())
+            avg_engagement = float(t["engagement"].mean()) * 100 if "engagement" in t.columns else 0.0
+            median_likes = int(t["like_count"].median()) if "like_count" in t.columns else 0
+            median_comments = int(t["comment_count"].median()) if "comment_count" in t.columns else 0
+
+            m1, m2, m3, m4 = st.columns(4)
+            with m1:
+                st.metric("Trending videos", len(t))
+            with m2:
+                st.metric("Total views", f"{total_views:,}")
+            with m3:
+                st.metric("Avg engagement rate", f"{avg_engagement:.2f}%")
+            with m4:
+                st.metric("Median likes/comments", f"{median_likes:,} / {median_comments:,}")
+
+            st.divider()
+            col1, col2 = st.columns(2)
+            with col1:
+                st.subheader("Videos by category")
+                cat_counts = t["category"].value_counts()
+                fig_cat = px.bar(
+                    x=cat_counts.values,
+                    y=cat_counts.index,
+                    orientation="h",
+                    labels={"x": "Videos", "y": "Category"},
+                    color=cat_counts.values,
+                    color_continuous_scale="Blues",
+                )
+                fig_cat.update_layout(yaxis={"categoryorder": "total ascending"})
+                st.plotly_chart(fig_cat, use_container_width=True)
+            with col2:
+                st.subheader("Category mix")
+                fig_mix = px.pie(names=cat_counts.index, values=cat_counts.values, hole=0.45)
+                st.plotly_chart(fig_mix, use_container_width=True)
+
+            col3, col4 = st.columns(2)
+            with col3:
+                st.subheader("Views vs likes")
+                fig_vl = px.scatter(
+                    t,
+                    x="view_count",
+                    y="like_count",
+                    color="category",
+                    hover_data=["title", "channel_title"],
+                    size="comment_count",
+                    size_max=40,
+                    opacity=0.75,
+                    log_x=True,
+                )
+                st.plotly_chart(fig_vl, use_container_width=True)
+            with col4:
+                st.subheader("Video age")
+                fig_age = px.histogram(t, x="video_age_days", nbins=30)
+                st.plotly_chart(fig_age, use_container_width=True)
+
+            if trending_delta_gold is not None:
+                descriptive_df = trending_delta_gold.get("descriptive", pd.DataFrame())
+                diagnostic_df = trending_delta_gold.get("diagnostic", pd.DataFrame())
+                predictive_df = trending_delta_gold.get("predictive", pd.DataFrame())
+                prescriptive_df = trending_delta_gold.get("prescriptive", pd.DataFrame())
+                channel_df = trending_delta_gold.get("channel_leaderboard", pd.DataFrame())
+                hour_df = trending_delta_gold.get("publish_hour_effect", pd.DataFrame())
+                score_df = trending_delta_gold.get("video_scoring", pd.DataFrame())
+
+                st.divider()
+                st.subheader("Descriptive analysis")
+                if not descriptive_df.empty and {"category", "avg_views"}.issubset(descriptive_df.columns):
+                    fig_desc = px.bar(
+                        descriptive_df.sort_values("avg_views", ascending=False).head(12),
+                        x="category",
+                        y="avg_views",
+                        color="avg_engagement" if "avg_engagement" in descriptive_df.columns else None,
+                    )
+                    fig_desc.update_layout(xaxis_tickangle=-45)
+                    st.plotly_chart(fig_desc, use_container_width=True)
+                    st.dataframe(descriptive_df, use_container_width=True, hide_index=True)
+
+                st.subheader("Diagnostic analysis")
+                if not diagnostic_df.empty and {"metric_pair", "correlation"}.issubset(diagnostic_df.columns):
+                    diag_map = {
+                        str(row["metric_pair"]): float(row["correlation"])
+                        for _, row in diagnostic_df.iterrows()
+                        if pd.notna(row["correlation"])
+                    }
+                    d1, d2, d3, d4 = st.columns(4)
+                    with d1:
+                        st.metric("Views vs likes", f"{diag_map.get('view_count_like_count', 0.0):.3f}")
+                    with d2:
+                        st.metric("Views vs comments", f"{diag_map.get('view_count_comment_count', 0.0):.3f}")
+                    with d3:
+                        st.metric("Engagement vs duration", f"{diag_map.get('engagement_duration_sec', 0.0):.3f}")
+                    with d4:
+                        st.metric("Title length vs views", f"{diag_map.get('title_length_view_count', 0.0):.3f}")
+                    st.dataframe(diagnostic_df, use_container_width=True, hide_index=True)
+
+                st.subheader("Predictive analysis")
+                if not predictive_df.empty and {"actual_like_count", "predicted_like_count"}.issubset(predictive_df.columns):
+                    predictive_df = predictive_df.copy()
+                    predictive_df["predicted_like_count"] = predictive_df["predicted_like_count"].clip(lower=0)
+                    fig_pred = px.scatter(
+                        predictive_df,
+                        x="actual_like_count",
+                        y="predicted_like_count",
+                        trendline="ols",
+                    )
+                    st.plotly_chart(fig_pred, use_container_width=True)
+                    st.dataframe(predictive_df.head(200), use_container_width=True, hide_index=True)
+
+                st.subheader("Prescriptive analysis")
+                if not prescriptive_df.empty:
+                    if {"category", "best_avg_views"}.issubset(prescriptive_df.columns):
+                        fig_presc = px.bar(
+                            prescriptive_df.sort_values("best_avg_views", ascending=False).head(12),
+                            x="best_avg_views",
+                            y="category",
+                            orientation="h",
+                            color="best_avg_engagement" if "best_avg_engagement" in prescriptive_df.columns else None,
+                        )
+                        fig_presc.update_layout(yaxis={"categoryorder": "total ascending"})
+                        st.plotly_chart(fig_presc, use_container_width=True)
+                    st.dataframe(prescriptive_df, use_container_width=True, hide_index=True)
+
+                st.divider()
+                st.subheader("Top channels by average views")
+                if not channel_df.empty and {"channel_title", "avg_views"}.issubset(channel_df.columns):
+                    fig_channel = px.bar(
+                        channel_df.sort_values("avg_views", ascending=False).head(12),
+                        x="avg_views",
+                        y="channel_title",
+                        orientation="h",
+                        color="videos" if "videos" in channel_df.columns else None,
+                    )
+                    fig_channel.update_layout(yaxis={"categoryorder": "total ascending"})
+                    st.plotly_chart(fig_channel, use_container_width=True)
+
+                st.subheader("Best publish hour")
+                if not hour_df.empty and {"publish_hour", "avg_views"}.issubset(hour_df.columns):
+                    hour_df_sorted = hour_df.sort_values("publish_hour").copy()
+                    best_idx = hour_df_sorted["avg_views"].idxmax()
+                    best_hour = int(hour_df_sorted.loc[best_idx, "publish_hour"])
+                    best_avg_views = float(hour_df_sorted.loc[best_idx, "avg_views"])
+                    st.metric("Best publish hour", f"{best_hour:02d}:00")
+                    st.caption(f"Highest average views at this hour: {best_avg_views:,.0f}")
+                    fig_hour = px.line(hour_df_sorted, x="publish_hour", y="avg_views", markers=True)
+                    fig_hour.add_scatter(
+                        x=[best_hour],
+                        y=[best_avg_views],
+                        mode="markers+text",
+                        text=[f"Best: {best_hour:02d}:00"],
+                        textposition="top center",
+                        marker=dict(size=12, color="#e74c3c"),
+                        name="Best hour",
+                    )
+                    st.plotly_chart(fig_hour, use_container_width=True)
+
+                st.divider()
+                st.subheader("Top scored trending videos")
+                if not score_df.empty:
+                    cols = [c for c in ["title", "channel_title", "category", "view_count", "like_count", "engagement", "score"] if c in score_df.columns]
+                    st.dataframe(score_df[cols].sort_values("score", ascending=False).head(25), use_container_width=True, hide_index=True)
+
+            st.divider()
+            st.subheader("Trending videos table")
+            sort_col = st.selectbox(
+                "Sort by",
+                ["view_count", "like_count", "engagement", "comment_count", "video_age_days", "duration_sec"],
+                key="trending_delta_sort",
+            )
+            display_cols = [
+                "title",
+                "channel_title",
+                "category",
+                "view_count",
+                "like_count",
+                "comment_count",
+                "engagement",
+                "duration_sec",
+                "video_age_days",
+                "published_at",
+            ]
+            show_cols = [c for c in display_cols if c in t.columns]
+            st.dataframe(t[show_cols].sort_values(by=sort_col, ascending=False), use_container_width=True, hide_index=True)
+
+    else:
+        st.warning("Trending Silver Delta data not found. Run `TrendingDataProcessorDelta.py` first.")
 
 # =============================================================================
 # THUMBNAIL ANALYTICS TAB
