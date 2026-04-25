@@ -1,27 +1,38 @@
 import os
 import sys
-from .CommentProcessor import CommentProcessor
+from .CommentProcessorDelta import CommentProcessorDelta
+from .SearchDataProcessorDelta import SearchDataProcessorDelta
+from .ThumbnailDataProcessorDelta import ThumbnailDataProcessorDelta
+from .TrendingDataProcessorDelta import TrendingDataProcessorDelta
 
 def main():
-    BASE_DIR = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-    RAW_DIR = os.path.join(BASE_DIR, "data", "raw")
-    PROCESSED_DIR = os.path.join(BASE_DIR, "data", "processed")
+    print("--- Starting YouTube Dashboard Delta Lake Pipeline ---")
     
-    os.makedirs(PROCESSED_DIR, exist_ok=True)
+    try:
+        print("\n--- Processing YouTube Search Data ---")
+        SearchDataProcessorDelta().process()
+    except Exception as e:
+        print(f"Error processing search data: {e}")
 
-    # Process Comments
-    comments_raw = os.path.join(RAW_DIR, "comments.csv")
-    comments_processed = os.path.join(PROCESSED_DIR, "comments_processed.csv")
+    try:
+        print("\n--- Processing YouTube Thumbnail Data ---")
+        ThumbnailDataProcessorDelta().process()
+    except Exception as e:
+        print(f"Error processing thumbnail data: {e}")
 
-    if os.path.exists(comments_raw):
-        print("--- Processing YouTube Comments ---")
-        processor = CommentProcessor(comments_raw, comments_processed)
-        processor.process()
-    else:
-        print(f"Warning: Raw comments file not found at {comments_raw}")
+    try:
+        print("\n--- Processing YouTube Trending Data ---")
+        TrendingDataProcessorDelta().process()
+    except Exception as e:
+        print(f"Error processing trending data: {e}")
 
-    # Future: Add processing for trending.csv and search.csv here
-    print("All processing tasks finished.")
+    try:
+        print("\n--- Processing YouTube Comments Data ---")
+        CommentProcessorDelta().process()
+    except Exception as e:
+        print(f"Error processing comments data: {e}")
+
+    print("\nAll Delta processing tasks finished.")
 
 if __name__ == "__main__":
     main()

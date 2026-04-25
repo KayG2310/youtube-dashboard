@@ -14,23 +14,23 @@ st.set_page_config(page_title="YouTube Comment Analytics", layout="wide", page_i
 @st.cache_data
 def load_comments_data():
     base_dir = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-    data_path = os.path.join(base_dir, "data", "processed", "comments_processed.csv")
-    if not os.path.exists(data_path):
+    delta_path = os.path.join(base_dir, "data", "processed", "silver", "comments")
+    if not os.path.exists(delta_path):
         return None
-    return pd.read_csv(data_path)
+    try:
+        dt = deltalake.DeltaTable(delta_path)
+        df = dt.to_pandas()
+        if "author_name" in df.columns:
+            df = df.rename(columns={"author_name": "author"})
+        return df
+    except Exception:
+        return None
 
 
 @st.cache_data
 def load_search_data():
-    base_dir = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-    data_path = os.path.join(base_dir, "data", "processed", "search_processed.csv")
-    if not os.path.exists(data_path):
-        return None
-    df = pd.read_csv(data_path)
-    for col in ("published_at", "fetched_at"):
-        if col in df.columns:
-            df[col] = pd.to_datetime(df[col], errors="coerce", utc=True)
-    return df
+    # Use the existing Silver Delta loader for search data
+    return load_search_delta_silver_data()
 
 
 @st.cache_data
@@ -120,25 +120,15 @@ def load_search_delta_silver_data():
     silver_path = os.path.join(base_dir, "data", "processed", "silver", "search")
     if not os.path.exists(silver_path):
         return None
-
-    spark = (
-        SparkSession.builder
-        .appName("SearchDeltaSilverDashboardReader")
-        .master("local[*]")
-        .config("spark.jars.packages", "io.delta:delta-spark_2.12:3.0.0")
-        .config("spark.sql.extensions", "io.delta.sql.DeltaSparkSessionExtension")
-        .config("spark.sql.catalog.spark_catalog", "org.apache.spark.sql.delta.catalog.DeltaCatalog")
-        .getOrCreate()
-    )
-    spark.sparkContext.setLogLevel("ERROR")
-
     try:
-        df = spark.read.format("delta").load(silver_path).toPandas()
+        dt = deltalake.DeltaTable(silver_path)
+        df = dt.to_pandas()
+        for col in ("published_at", "fetched_at"):
+            if col in df.columns:
+                df[col] = pd.to_datetime(df[col], errors="coerce", utc=True)
+        return df
     except Exception:
         return None
-    finally:
-        spark.stop()
-    return df
 
 
 @st.cache_data
@@ -193,25 +183,15 @@ def load_trending_delta_silver_data():
     silver_path = os.path.join(base_dir, "data", "processed", "silver", "trending")
     if not os.path.exists(silver_path):
         return None
-
-    spark = (
-        SparkSession.builder
-        .appName("TrendingDeltaSilverDashboardReader")
-        .master("local[*]")
-        .config("spark.jars.packages", "io.delta:delta-spark_2.12:3.0.0")
-        .config("spark.sql.extensions", "io.delta.sql.DeltaSparkSessionExtension")
-        .config("spark.sql.catalog.spark_catalog", "org.apache.spark.sql.delta.catalog.DeltaCatalog")
-        .getOrCreate()
-    )
-    spark.sparkContext.setLogLevel("ERROR")
-
     try:
-        df = spark.read.format("delta").load(silver_path).toPandas()
+        dt = deltalake.DeltaTable(silver_path)
+        df = dt.to_pandas()
+        for col in ("published_at", "fetched_at"):
+            if col in df.columns:
+                df[col] = pd.to_datetime(df[col], errors="coerce", utc=True)
+        return df
     except Exception:
         return None
-    finally:
-        spark.stop()
-    return df
 
 
 df = load_comments_data()
@@ -239,7 +219,7 @@ tab_comments, tab_search_delta, tab_trending, tab_thumbnail = st.tabs(
 # =============================================================================
 with tab_comments:
     if df is None:
-        st.warning("Comments data not found (`comments_processed.csv`).")
+        st.warning("Comments data not found in Delta Silver layer.")
     else:
         st.sidebar.header("Comment filters")
         selected_video = st.sidebar.selectbox(
@@ -378,7 +358,7 @@ with tab_comments:
 # =============================================================================
 if False:  # search analytics hidden from UI (kept for reference)
     if search_df is None:
-        st.warning("Search data not found (`search_processed.csv`).")
+        st.warning("Search data not found in Delta Silver layer.")
     else:
         st.sidebar.header("Search filters")
         cat_opts = sorted(search_df["category"].dropna().unique())
