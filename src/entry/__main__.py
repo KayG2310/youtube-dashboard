@@ -34,43 +34,50 @@ def build_pipeline_steps(project_root: Path) -> List[PipelineStep]:
     py = sys.executable
     return [
         PipelineStep(
-            name="Data collection (trending/search/comments + thumbnails)",
+            name="1. Data collection (trending/search/comments + thumbnails)",
             command=[py, str(project_root / "src" / "DataCollection" / "CollectorScript.py")],
         ),
+        # Producers
         PipelineStep(
-            name="Comment data processing",
-            command=[py, str(project_root / "src" / "DataProcessing" / "CommentProcessor.py")],
-        ),
-        PipelineStep(
-            name="Trending analytics processing",
-            command=[py, str(project_root / "src" / "DataProcessing" / "trending_processing.py")],
-        ),
-        PipelineStep(
-            name="Thumbnail analytics processing",
-            command=[py, str(project_root / "src" / "DataProcessing" / "Thumbnail_processing.py")],
-        ),
-        PipelineStep(
-            name="Publish search records to Kafka",
+            name="2a. Publish search records to Kafka",
             command=[py, str(project_root / "src" / "DataCollection" / "SearchKafkaProducer.py")],
         ),
         PipelineStep(
-            name="Search Delta Bronze/Silver processing",
-            command=[py, str(project_root / "src" / "DataProcessing" / "SearchDataProcessorDelta.py")],
-        ),
-        PipelineStep(
-            name="Search Delta Gold analysis",
-            command=[py, str(project_root / "src" / "DataAnalysis" / "searchAnalysis" / "search_analysis_delta.py")],
-        ),
-        PipelineStep(
-            name="Publish trending records to Kafka",
+            name="2b. Publish trending records to Kafka",
             command=[py, str(project_root / "src" / "DataCollection" / "TrendingKafkaProducer.py")],
         ),
         PipelineStep(
-            name="Trending Delta Bronze/Silver processing",
+            name="2c. Publish thumbnail records to Kafka",
+            command=[py, str(project_root / "src" / "DataCollection" / "ThumbnailKafkaProducer.py")],
+        ),
+        PipelineStep(
+            name="2d. Publish comment records to Kafka",
+            command=[py, str(project_root / "src" / "DataCollection" / "CommentKafkaProducer.py")],
+        ),
+        # Delta Processors (Bronze & Silver)
+        PipelineStep(
+            name="3a. Search Delta Bronze/Silver processing",
+            command=[py, str(project_root / "src" / "DataProcessing" / "SearchDataProcessorDelta.py")],
+        ),
+        PipelineStep(
+            name="3b. Trending Delta Bronze/Silver processing",
             command=[py, str(project_root / "src" / "DataProcessing" / "TrendingDataProcessorDelta.py")],
         ),
         PipelineStep(
-            name="Trending Delta Gold analysis",
+            name="3c. Thumbnail Delta Bronze/Silver processing",
+            command=[py, str(project_root / "src" / "DataProcessing" / "ThumbnailDataProcessorDelta.py")],
+        ),
+        PipelineStep(
+            name="3d. Comment Delta Bronze/Silver processing",
+            command=[py, str(project_root / "src" / "DataProcessing" / "CommentProcessorDelta.py")],
+        ),
+        # Gold Analysis
+        PipelineStep(
+            name="4a. Search Delta Gold analysis",
+            command=[py, str(project_root / "src" / "DataAnalysis" / "searchAnalysis" / "search_analysis_delta.py")],
+        ),
+        PipelineStep(
+            name="4b. Trending Delta Gold analysis",
             command=[py, str(project_root / "src" / "DataAnalysis" / "trendingAnalysis" / "trending_analysis_delta.py")],
         ),
     ]
