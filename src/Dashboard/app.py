@@ -7,6 +7,16 @@ import json
 import deltalake
 from pyspark.sql import SparkSession
 
+# Language Code Mapping
+LANG_MAP = {
+    'en': 'English', 'hi': 'Hindi', 'es': 'Spanish', 'fr': 'French',
+    'de': 'German', 'ja': 'Japanese', 'ko': 'Korean', 'ru': 'Russian',
+    'pt': 'Portuguese', 'it': 'Italian', 'zh-cn': 'Chinese (Simp)',
+    'zh-tw': 'Chinese (Trad)', 'ar': 'Arabic', 'tr': 'Turkish',
+    'vi': 'Vietnamese', 'id': 'Indonesian', 'th': 'Thai',
+    'bn': 'Bengali', 'unknown': 'Unknown'
+}
+
 # Set Page Config
 st.set_page_config(page_title="YouTube Comment Analytics", layout="wide", page_icon="📊")
 
@@ -194,6 +204,32 @@ def load_trending_delta_silver_data():
         return None
 
 
+@st.cache_data
+def load_comment_delta_gold_data():
+    base_dir = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+    gold_base = os.path.join(base_dir, "data", "analysis", "gold", "comment_analysis")
+    paths = {
+        "video_sentiment": os.path.join(gold_base, "video_sentiment_summary"),
+        "lang_sentiment": os.path.join(gold_base, "language_sentiment_summary"),
+        "sentiment_impact": os.path.join(gold_base, "sentiment_impact_analysis"),
+        "top_negative": os.path.join(gold_base, "top_negative_videos"),
+    }
+    
+    if not os.path.exists(paths["video_sentiment"]):
+        return None
+        
+    try:
+        data = {
+            "video_sentiment": deltalake.DeltaTable(paths["video_sentiment"]).to_pandas(),
+            "lang_sentiment": deltalake.DeltaTable(paths["lang_sentiment"]).to_pandas(),
+            "sentiment_impact": deltalake.DeltaTable(paths["sentiment_impact"]).to_pandas() if os.path.exists(paths["sentiment_impact"]) else pd.DataFrame(),
+            "top_negative": deltalake.DeltaTable(paths["top_negative"]).to_pandas() if os.path.exists(paths["top_negative"]) else pd.DataFrame(),
+        }
+        return data
+    except Exception:
+        return None
+
+
 df = load_comments_data()
 search_df = load_search_data()
 thumbnail_data = load_thumbnail_data()
@@ -202,6 +238,7 @@ search_delta_gold = load_search_delta_gold_data()
 search_delta_silver = load_search_delta_silver_data()
 trending_delta_gold = load_trending_delta_gold_data()
 trending_delta_silver = load_trending_delta_silver_data()
+comment_delta_gold = load_comment_delta_gold_data()
 
 st.title("📹 YouTube Analytics Dashboard")
 st.markdown("Comment sentiment and engagement, plus search-result video performance.")
@@ -273,10 +310,11 @@ with tab_comments:
         with row1_col2:
             st.subheader("Top Languages")
             lang_counts = filtered_df["language"].value_counts().head(10)
+            lang_names = [LANG_MAP.get(code, code) for code in lang_counts.index]
             fig_lang = px.bar(
-                x=lang_counts.index,
+                x=lang_names,
                 y=lang_counts.values,
-                labels={"x": "Language Code", "y": "Count"},
+                labels={"x": "Language", "y": "Count"},
                 color=lang_counts.values,
                 color_continuous_scale="Viridis",
             )
@@ -351,6 +389,80 @@ with tab_comments:
             .head(50),
             use_container_width=True,
         )
+
+        if comment_delta_gold is not None:
+            st.divider()
+            st.header("Comment Gold Insights")
+            
+            g_video = comment_delta_gold.get("video_sentiment", pd.DataFrame())
+            g_impact = comment_delta_gold.get("sentiment_impact", pd.DataFrame())
+            g_lang = comment_delta_gold.get("lang_sentiment", pd.DataFrame())
+            g_negative = comment_delta_gold.get("top_negative", pd.DataFrame())
+
+            col1, col2 = st.columns(2)
+            with col1:
+                st.subheader("Top Videos by Sentiment")
+                if not g_video.empty:
+                    # Use title if available, otherwise fallback to video_id
+                    if "title" in g_video.columns:
+                        g_video["display_name"] = g_video["title"].fillna(g_video["video_id"])
+                    else:
+                        g_video["display_name"] = g_video["video_id"]
+                    fig_gold_sent = px.bar(
+                        g_video.sort_values("avg_sentiment", ascending=False).head(10),
+                        x="avg_sentiment",
+                        y="display_name",
+                        orientation="h",
+                        color="total_comments",
+                        labels={"avg_sentiment": "Average Sentiment", "display_name": "Video Title", "total_comments": "Comments"},
+                        color_continuous_scale="RdYlGn"
+                    )
+                    st.plotly_chart(fig_gold_sent, use_container_width=True)
+                else:
+                    st.info("No video sentiment summary available.")
+
+            with col2:
+                st.subheader("Sentiment vs Video Views")
+                if not g_impact.empty:
+                    fig_impact = px.scatter(
+                        g_impact,
+                        x="avg_sentiment",
+                        y="view_count",
+                        size="total_comments",
+                        color="category",
+                        hover_data=["title", "channel_title"],
+                        log_y=True,
+                        labels={"avg_sentiment": "Sentiment", "view_count": "Views (log)"}
+                    )
+                    st.plotly_chart(fig_impact, use_container_width=True)
+                else:
+                    st.info("No sentiment impact analysis available.")
+
+            st.divider()
+            col3, col4 = st.columns(2)
+            with col3:
+                st.subheader("Language Sentiment Distribution")
+                if not g_lang.empty:
+                    g_lang["lang_name"] = g_lang["language"].map(lambda x: LANG_MAP.get(x, x))
+                    fig_lang_sent = px.bar(
+                        g_lang.sort_values("comment_count", ascending=False).head(10),
+                        x="lang_name",
+                        y="avg_sentiment",
+                        color="comment_count",
+                        labels={"avg_sentiment": "Avg Sentiment", "lang_name": "Language"}
+                    )
+                    st.plotly_chart(fig_lang_sent, use_container_width=True)
+            
+            with col4:
+                st.subheader("Videos Needing Attention (Negative Sentiment)")
+                if not g_negative.empty:
+                    st.dataframe(
+                        g_negative[["title", "channel_title", "avg_sentiment", "total_comments"]],
+                        use_container_width=True,
+                        hide_index=True
+                    )
+                else:
+                    st.info("No high-negative sentiment videos found.")
 
 #TODO: Remove this tab after testing of new search analytics using delta tables is complete.
 # =============================================================================

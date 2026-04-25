@@ -80,6 +80,10 @@ def build_pipeline_steps(project_root: Path) -> List[PipelineStep]:
             name="4b. Trending Delta Gold analysis",
             command=[py, str(project_root / "src" / "DataAnalysis" / "trendingAnalysis" / "trending_analysis_delta.py")],
         ),
+        PipelineStep(
+            name="4c. Comment Delta Gold analysis",
+            command=[py, str(project_root / "src" / "DataAnalysis" / "commentAnalysis" / "comment_analysis_delta.py")],
+        ),
     ]
 
 
