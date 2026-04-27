@@ -84,6 +84,10 @@ def build_pipeline_steps(project_root: Path) -> List[PipelineStep]:
             name="4c. Comment Delta Gold analysis",
             command=[py, str(project_root / "src" / "DataAnalysis" / "commentAnalysis" / "comment_analysis_delta.py")],
         ),
+        PipelineStep(
+            name="4d. Thumbnail Delta Gold analysis",
+            command=[py, str(project_root / "src" / "DataAnalysis" / "thumbnailAnalysis" / "thumbnail_analysis_delta.py")],
+        ),
     ]
 
 

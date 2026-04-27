@@ -20,13 +20,15 @@ def create_spark():
     )
 
 
-def main():
+def main(): 
     spark = create_spark()
     spark.sparkContext.setLogLevel("WARN")
 
-    base_dir = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+    base_dir = os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
     silver_path = os.path.join(base_dir, "data", "processed", "silver", "trending")
+    search_silver_path = os.path.join(base_dir, "data", "processed", "silver", "search")
     gold_base = os.path.join(base_dir, "data", "analysis", "gold", "trending_analysis")
+
 
     descriptive_path = os.path.join(gold_base, "descriptive")
     diagnostic_path = os.path.join(gold_base, "diagnostic")

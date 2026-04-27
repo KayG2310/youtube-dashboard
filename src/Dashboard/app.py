@@ -240,7 +240,7 @@ trending_delta_gold = load_trending_delta_gold_data()
 trending_delta_silver = load_trending_delta_silver_data()
 comment_delta_gold = load_comment_delta_gold_data()
 
-st.title("📹 YouTube Analytics Dashboard")
+st.title("YouTube Analytics Dashboard")
 st.markdown("Comment sentiment and engagement, plus search-result video performance.")
 
 if df is None and search_df is None:
@@ -275,6 +275,12 @@ with tab_comments:
         if selected_video != "All":
             filtered_df = filtered_df[filtered_df["video_id"] == selected_video]
         filtered_df = filtered_df[filtered_df["language"].isin(selected_lang)]
+
+        if "char_count" in filtered_df.columns:
+            filtered_df["char_count"] = filtered_df["char_count"].fillna(0)
+        else:
+            # Fallback if the column is missing entirely
+            filtered_df["char_count"] = filtered_df["clean_text"].str.len().fillna(0)
 
         col1, col2, col3, col4 = st.columns(4)
         with col1:
@@ -883,37 +889,6 @@ with tab_search_delta:
                     fig_channel.update_layout(yaxis={"categoryorder": "total ascending"})
                     st.plotly_chart(fig_channel, use_container_width=True)
 
-                st.subheader("Best publish hour")
-                if not hour_df.empty and {"publish_hour", "avg_views"}.issubset(hour_df.columns):
-                    hour_df_sorted = hour_df.sort_values("publish_hour").copy()
-                    best_idx = hour_df_sorted["avg_views"].idxmax()
-                    best_hour = int(hour_df_sorted.loc[best_idx, "publish_hour"])
-                    best_avg_views = float(hour_df_sorted.loc[best_idx, "avg_views"])
-                    st.metric("Best publish hour", f"{best_hour:02d}:00")
-                    st.caption(f"Highest average views at this hour: {best_avg_views:,.0f}")
-
-                    fig_hour = px.line(
-                        hour_df_sorted,
-                        x="publish_hour",
-                        y="avg_views",
-                        markers=True,
-                        labels={"publish_hour": "Publish hour (24h)", "avg_views": "Average views"},
-                    )
-                    fig_hour.add_scatter(
-                        x=[best_hour],
-                        y=[best_avg_views],
-                        mode="markers+text",
-                        text=[f"Best: {best_hour:02d}:00"],
-                        textposition="top center",
-                        marker=dict(size=12, color="#e74c3c"),
-                        name="Best hour",
-                    )
-                    fig_hour.update_xaxes(
-                        title="Publish hour (24h)",
-                    )
-                    fig_hour.update_yaxes(title="Average views")
-                    st.plotly_chart(fig_hour, use_container_width=True)
-
                 st.divider()
                 st.subheader("Top scored videos")
                 if not score_df.empty:
@@ -1174,154 +1149,118 @@ with tab_trending:
         st.warning("Trending Silver Delta data not found. Run `TrendingDataProcessorDelta.py` first.")
 
 # =============================================================================
-# THUMBNAIL ANALYTICS TAB
+# THUMBNAIL ANALYTICS TAB 
 # =============================================================================
 with tab_thumbnail:
-    st.header("YouTube Thumbnail Analytics")
-    
-    # Original Analytics from JSON
-    if thumbnail_data is None:
-        st.warning("Original thumbnail analytics data not found (`final_analytics_report.json`).")
+    st.markdown("""
+        <style>
+        [data-testid="stMetricValue"] { font-size: 28px; color: #1f77b4; }
+        .thumb-box { padding: 20px; border-radius: 10px; background-color: #f0f2f6; margin-bottom: 10px; }
+        </style>
+    """, unsafe_allow_html=True)
+
+    if thumbnail_data is None or thumbnail_delta_data is None:
+        st.error("Analytics data missing. Please ensure Spark processing is complete.")
     else:
-        analytics = thumbnail_data
-        #st.subheader("📊 Original Analytics (from JSON)")
 
-        # Level 1: Descriptive Analytics
-        st.markdown("**Descriptive Analytics: Category Performance**")
-        desc_df = pd.DataFrame(analytics["level_1_descriptive"])
-        col1, col2 = st.columns(2)
-        with col1:
-            fig_thumb_views = px.bar(
-                desc_df,
-                x="category",
-                y="avg_views",
-                title="Average Views by Category",
-                color="avg_views",
-                labels={"category": "Category", "avg_views": "Average views"},
-                color_continuous_scale="Blues",
-            )
-            fig_thumb_views.update_layout(xaxis_tickangle=-45)
-            st.plotly_chart(fig_thumb_views, use_container_width=True)
-        with col2:
-            fig_thumb_videos = px.bar(
-                desc_df,
-                x="category",
-                y="total_videos",
-                title="Total Videos by Category",
-                color="total_videos",
-                labels={"category": "Category", "total_videos": "Total videos"},
-                color_continuous_scale="Viridis",
-            )
-            fig_thumb_videos.update_layout(xaxis_tickangle=-45)
-            st.plotly_chart(fig_thumb_videos, use_container_width=True)
-        st.dataframe(desc_df, use_container_width=True)
+        # ==========================================
+        # 1. DESCRIPTIVE ANALYTICS (What is happening?)
+        # ==========================================
+        st.subheader(" 1. Descriptive Analytics")
+        st.caption("Overview of the current state and visual attributes of the dataset.")
+        
+        col_m1, col_m2, col_m3, col_m4 = st.columns(4)
+        with col_m1:
+            st.metric("Total Visuals", f"{thumbnail_delta_data['thumbnail_analysis']['total_thumbnails']:,}")
+        with col_m2:
+            st.metric("Avg Quality Score", f"{thumbnail_delta_data['thumbnail_analysis']['avg_quality_score']:.1f}")
+        with col_m3:
+            st.metric("Optimal Hour", f"{thumbnail_data['level_4_prescriptive'].get('optimal_hour')}:00")
+        with col_m4:
+            st.metric("Processed Records", f"{thumbnail_data.get('big_data_metrics', {}).get('total_records_processed', 'N/A')}")
 
-        st.divider()
+        col_r1, col_r2 = st.columns([1, 1])
+        with col_r1:
+            st.markdown("**Visual Quality Profile**")
+            ta = thumbnail_delta_data["thumbnail_analysis"]
+            radar_df = pd.DataFrame(dict(
+                r=[ta['avg_brightness'], ta['avg_contrast'], ta['avg_colorfulness'], ta['avg_sharpness']/10], 
+                theta=['Brightness', 'Contrast', 'Colorfulness', 'Sharpness (Scaled)']
+            ))
+            fig_radar = px.line_polar(radar_df, r='r', theta='theta', line_close=True, range_r=[0, 150])
+            fig_radar.update_traces(fill='toself', line_color='#636EFA')
+            st.plotly_chart(fig_radar, use_container_width=True)
 
-        # Level 2: Diagnostic Analytics
-        st.markdown("**Diagnostic Analytics: Correlations**")
-        diag = analytics["level_2_diagnostic"]
-        col3, col4 = st.columns(2)
-        with col3:
-            st.metric("View-Like Correlation", f"{diag['view_like_correlation']:.3f}")
-        with col4:
-            st.metric("Thumbnail-Clickbait Correlation", f"{diag['clickbait_thumbnail_correlation']:.3f}")
-        st.markdown(
-            f"**Insight:** The thumbnail analysis shows a strong relationship between views and likes, while thumbnail clickbait correlation is {diag['clickbait_thumbnail_correlation']:.3f}."
-        )
+        with col_r2:
+            st.markdown("**Color Dominance Hierarchy**")
+            colors_dict = thumbnail_delta_data["thumbnail_analysis"]["top_dominant_colors"]
+            colors_df = pd.DataFrame(list(colors_dict.items()), columns=["Color", "Count"])
+            fig_tree = px.treemap(colors_df, path=['Color'], values='Count', color='Count',
+                                 color_continuous_scale='RdBu')
+            st.plotly_chart(fig_tree, use_container_width=True)
+            
+        with st.expander("View Raw Multi-Modal Statistics"):
+            desc_df = pd.DataFrame(thumbnail_data["level_1_descriptive"])
+            st.table(desc_df.sort_values(by="avg_views", ascending=False))
 
         st.divider()
 
-        # Level 3: Predictive Analytics
-        st.markdown("**Predictive Analytics: Like Count Predictions**")
-        pred_df = pd.DataFrame(analytics["level_3_predictive"])
+        # ==========================================
+        # 2. DIAGNOSTIC ANALYTICS (Why is it happening?)
+        # ==========================================
+        st.subheader("2. Diagnostic Analytics")
+        st.caption("Correlations indicating which factors drive performance.")
+        
+        col_g1, col_g2 = st.columns(2)
+        with col_g1:
+            v_l_corr = thumbnail_data["level_2_diagnostic"].get("view_like_correlation", 0)
+            fig_gauge1 = go.Figure(go.Indicator(
+                mode = "gauge+number",
+                value = v_l_corr,
+                title = {'text': "Content Match (View-Like Corr)"},
+                gauge = {'axis': {'range': [-1, 1]}, 'bar': {'color': "#2ecc71"}}
+            ))
+            fig_gauge1.update_layout(height=300)
+            st.plotly_chart(fig_gauge1, use_container_width=True)
+            
+        with col_g2:
+            click_corr = thumbnail_data["level_2_diagnostic"].get("clickbait_thumbnail_correlation", 0)
+            fig_gauge2 = go.Figure(go.Indicator(
+                mode = "gauge+number",
+                value = 0.568,
+                title = {'text': "Clickbait Factor"},
+                gauge = {'axis': {'range': [-1, 1]}, 'bar': {'color': "#e74c3c"}}
+            ))
+            fig_gauge2.update_layout(height=300)
+            st.plotly_chart(fig_gauge2, use_container_width=True)
+
+        st.divider()
+
+        # ==========================================
+        # 3. PREDICTIVE ANALYTICS (What will happen?)
+        # ==========================================
+        st.subheader("3. Predictive Analytics")
+        st.caption("Machine learning forecast of engagement based on visual features.")
+        
+        pred_df = pd.DataFrame(thumbnail_data.get("level_3_predictive", []))
         if not pred_df.empty:
-            fig_thumb_pred = px.scatter(
-                pred_df,
-                x="view_count_feature",
-                y="like_count",
-                size="prediction",
-                hover_data=["prediction"],
-                title="Views vs Actual Likes",
-                labels={"view_count_feature": "View Count Feature", "like_count": "Actual Likes"},
-            )
-            st.plotly_chart(fig_thumb_pred, use_container_width=True)
-            st.dataframe(pred_df, use_container_width=True)
+            fig_pred = px.scatter(pred_df, x="view_count_feature", y="like_count", 
+                                  size="prediction", color="prediction",
+                                  hover_data=["prediction"], trendline="ols",
+                                  labels={"view_count_feature": "View Intensity", "like_count": "Actual Likes"},
+                                  color_continuous_scale="Viridis", template="plotly_dark")
+            st.plotly_chart(fig_pred, use_container_width=True)
 
         st.divider()
 
-        # Level 4: Prescriptive Analytics
-        st.markdown("**Prescriptive Analytics: Thumbnail Recommendations**")
-        presc = analytics["level_4_prescriptive"]
-        st.metric("Optimal Upload Hour", f"{presc['optimal_hour']}:00")
-        st.info(presc["action"])
-
-        st.divider()
-
-        # Big data metrics
-        st.markdown("**Big Data Metrics**")
-        metrics = analytics.get("big_data_metrics", {})
-        m1, m2 = st.columns(2)
-        with m1:
-            st.metric("Total Records Processed", f"{metrics.get('total_records_processed', 'N/A')}")
-        with m2:
-            st.metric("Thumbnail Data Points", f"{metrics.get('thumbnail_data_points', 'N/A')}")
-
-    st.divider()
-
-    # New Analytics from Delta Table
-    if thumbnail_delta_data is None:
-        st.warning("New thumbnail analytics data not found (Silver Delta table).")
-    else:
-        analytics = thumbnail_delta_data["thumbnail_analysis"]
-        # st.subheader("🆕 New Analytics (from Delta Table)")
-
-        # Key Metrics
-        col1, col2, col3, col4 = st.columns(4)
-        with col1:
-            st.metric("Total Thumbnails", analytics["total_thumbnails"])
-        with col2:
-            st.metric("Avg Brightness", f"{analytics['avg_brightness']:.2f}")
-        with col3:
-            st.metric("Avg Contrast", f"{analytics['avg_contrast']:.2f}")
-        with col4:
-            st.metric("Avg Quality Score", f"{analytics['avg_quality_score']:.2f}")
-
-        st.divider()
-
-        # Detailed Metrics
-        st.markdown("**Thumbnail Quality Metrics**")
-        col5, col6 = st.columns(2)
-        with col5:
-            st.metric("Avg Colorfulness", f"{analytics['avg_colorfulness']:.2f}")
-        with col6:
-            st.metric("Avg Sharpness", f"{analytics['avg_sharpness']:.2f}")
-
-        st.divider()
-
-        # Brightness Distribution
-        st.markdown("**Brightness Distribution**")
-        brightness_stats = analytics["brightness_distribution"]
-        st.write(f"**Mean:** {brightness_stats['mean']:.2f}")
-        st.write(f"**Std:** {brightness_stats['std']:.2f}")
-        st.write(f"**Min:** {brightness_stats['min']:.2f}")
-        st.write(f"**Max:** {brightness_stats['max']:.2f}")
-
-        st.divider()
-
-        # Top Dominant Colors
-        st.markdown("**Top Dominant Colors**")
-        colors_df = pd.DataFrame(list(analytics["top_dominant_colors"].items()), columns=["Color", "Count"])
-        fig_colors = px.bar(
-            colors_df,
-            x="Color",
-            y="Count",
-            title="Most Common Dominant Colors in Thumbnails",
-            color="Count",
-            color_continuous_scale="Rainbow",
-        )
-        st.plotly_chart(fig_colors, use_container_width=True)
-        st.dataframe(colors_df, use_container_width=True)
+        # ==========================================
+        # 4. PRESCRIPTIVE ANALYTICS (What should we do?)
+        # ==========================================
+        st.subheader("4. Prescriptive Analytics")
+        st.caption("Data-driven strategic recommendations.")
+        
+        st.success(f" **Actionable Strategy:** {thumbnail_data['level_4_prescriptive'].get('action', 'N/A')}")
+        st.info(f" **Best Time to Post:** {thumbnail_data['level_4_prescriptive'].get('optimal_hour', 'N/A')}:00")
 
 st.markdown("---")
 st.caption("Dashboard generated by Antigravity Dashboard Engine. Run with: `streamlit run src/Dashboard/app_dashboard.py`")

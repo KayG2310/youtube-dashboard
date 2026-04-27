@@ -52,3 +52,17 @@ services:
     command: tail -f /dev/null
     depends_on:
       - kafka
+  
+  dashboard:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile
+    volumes:
+      - .:/app
+    ports:
+      - "8502:8502"  # Streamlit default port
+    env_file:
+      - .env
+    command: streamlit run src/Dashboard/app.py --server.port=8502 --server.address=0.0.0.0
+    depends_on:
+      - spark-processor
