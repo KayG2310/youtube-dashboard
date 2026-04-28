@@ -9,6 +9,7 @@ import pandas as pd
 from googleapiclient.discovery import build
 from googleapiclient.errors import HttpError
 from dotenv import load_dotenv
+from pymongo import MongoClient
 
 # -------------------- SETUP --------------------
 load_dotenv()
@@ -16,6 +17,15 @@ load_dotenv()
 API_KEY = os.getenv("YOUTUBE_API_KEY")
 if not API_KEY:
     raise EnvironmentError("YOUTUBE_API_KEY environment variable is required")
+MONGO_URI = os.getenv("MONGO_URI", "mongodb://admin:password@youtube-mongodb:27017/")
+try:
+    mongo_client = MongoClient(MONGO_URI, serverSelectionTimeoutMS=5000)
+    db = mongo_client["youtube_big_data"]
+    mongo_client.server_info() # Test connection
+    logging.info("Connected to MongoDB successfully.")
+except Exception as e:
+    logging.error(f"Could not connect to MongoDB: {e}")
+    raise
 
 youtube = build("youtube", "v3", developerKey=API_KEY)
 
@@ -50,8 +60,8 @@ def download_thumbnails(video_items):
                 file_path = os.path.join(THUMBNAIL_PATH, f"{video_id}.jpg")
                 if os.path.exists(file_path):
                     continue
-
-                response = requests.get(img_url, timeout=10)
+                
+                response = requests.get(img_url, timeout=30)
                 # FIX: Corrected status_status to status_code
                 if response.status_code == 200:
                     with open(file_path, "wb") as f:
@@ -59,6 +69,7 @@ def download_thumbnails(video_items):
                     count += 1
             except Exception as e:
                 logging.warning(f"Could not download thumbnail for {video_id}: {e}")
+                continue
     
     if count > 0:
         logging.info(f"Downloaded {count} new images to {THUMBNAIL_PATH}")
@@ -104,17 +115,21 @@ def search_videos(query, max_results=100):
     video_ids = []
     next_page_token = None
     while len(video_ids) < max_results:
-        request = youtube.search().list(
-            part="id",
-            q=query,
-            type="video",
-            maxResults=min(50, max_results - len(video_ids)),
-            pageToken=next_page_token
-        )
-        response = request.execute()
-        video_ids.extend([item["id"]["videoId"] for item in response["items"]])
-        next_page_token = response.get("nextPageToken")
-        if not next_page_token: break
+        try:
+            request = youtube.search().list(
+                part="id",
+                q=query,
+                type="video",
+                maxResults=min(50, max_results - len(video_ids)),
+                pageToken=next_page_token
+            )
+            response = request.execute(num_retries=3) 
+            video_ids.extend([item["id"]["videoId"] for item in response["items"]])
+            next_page_token = response.get("nextPageToken")
+            if not next_page_token: break
+        except Exception as e:
+            logging.error(f"Search failed for {query}: {e}")
+            break 
     return video_ids
 
 def get_trending_videos(region_code="US", max_results=100):
@@ -161,6 +176,23 @@ def get_video_comments(video_id, max_results=50):
     except Exception:
         pass
     return pd.DataFrame(comments)
+
+def insert_into_mongodb(df, collection_name):
+    """Inserts a Pandas DataFrame into a MongoDB collection."""
+    if df is None or df.empty:
+        return
+
+    # Replace NaN/NaT with None so MongoDB doesn't throw errors
+    clean_df = df.where(pd.notnull(df), None)
+    records = clean_df.to_dict(orient="records")
+    
+    collection = db[collection_name]
+    
+    try:
+        collection.insert_many(records)
+        logging.info(f"Inserted {len(records)} fresh records into MongoDB -> '{collection_name}' collection")
+    except Exception as e:
+        logging.error(f"Failed to insert into MongoDB: {e}")
 
 
 def append_to_raw_store(df, csv_path, json_path, dedupe_cols=None):
@@ -209,6 +241,7 @@ if __name__ == "__main__":
         os.path.join(DATA_PATH, "trending.json"),
         dedupe_cols=["video_id", "fetched_at"],
     )
+    insert_into_mongodb(trending_df, "trending_raw")
 
     # 2. SEARCH (Unified loop for High Volume)
     search_queries = ["gaming", "news", "music", "tech", "vlogs", "movies", "sports", "machine learning"]
@@ -227,13 +260,14 @@ if __name__ == "__main__":
         time.sleep(0.5)
 
     # Save all combined search results
-    final_search_df = pd.concat(all_search_stats, ignore_index=True)
+    search_df = pd.concat(all_search_stats, ignore_index=True)
     append_to_raw_store(
-        final_search_df,
+        search_df,
         os.path.join(DATA_PATH, "search.csv"),
         os.path.join(DATA_PATH, "search.json"),
         dedupe_cols=["video_id", "search_query", "fetched_at"],
     )
+    insert_into_mongodb(search_df, "search_raw")
 
     # 3. COMMENTS
     logging.info("Collecting comments for all trending and searched videos...")
@@ -251,5 +285,7 @@ if __name__ == "__main__":
             os.path.join(DATA_PATH, "comments.json"),
             dedupe_cols=["video_id", "author", "comment_text"],
         )
+    
+    insert_into_mongodb(comments_df, "comments_raw")
 
     logging.info("Successfully collected metadata and binary thumbnails.")

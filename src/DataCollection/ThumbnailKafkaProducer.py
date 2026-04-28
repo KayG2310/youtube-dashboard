@@ -1,5 +1,6 @@
 import json
 import os
+import sys
 import time
 from datetime import datetime
 from collections import Counter
@@ -103,9 +104,16 @@ def produce_thumbnail_records(records):
 
 
 if __name__ == "__main__":
-    folder_path = get_thumbnail_folder_path()
-    print(f"Analyzing thumbnail images from {folder_path} ...")
-    thumbnail_records = load_thumbnail_records(folder_path)
-    print(f"Publishing {len(thumbnail_records)} records to topic '{KAFKA_TOPIC}' ...")
-    sent_count = produce_thumbnail_records(thumbnail_records)
-    print(f"Done. Published {sent_count} thumbnail records.")
+    try:
+        folder_path = get_thumbnail_folder_path()
+        print(f"Analyzing thumbnail images from {folder_path} ...")
+        thumbnail_records = load_thumbnail_records(folder_path)
+        print(f"Publishing {len(thumbnail_records)} records to topic '{KAFKA_TOPIC}' ...")
+        sent_count = produce_thumbnail_records(thumbnail_records)
+        print(f"Done. Published {sent_count} thumbnail records.")
+    except BrokenPipeError:
+        try:
+            sys.stdout.close()
+        except Exception:
+            pass
+        sys.exit(0)

@@ -66,3 +66,14 @@ services:
     command: streamlit run src/Dashboard/app.py --server.port=8502 --server.address=0.0.0.0
     depends_on:
       - spark-processor
+  
+  mongodb:
+    image: mongo:latest
+    container_name: youtube-mongodb
+    ports:
+      - "27017:27017"
+    environment:
+      MONGO_INITDB_ROOT_USERNAME: admin
+      MONGO_INITDB_ROOT_PASSWORD: password
+    networks:
+      - default 

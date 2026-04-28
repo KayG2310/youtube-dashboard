@@ -107,7 +107,7 @@ def main() -> None:
     )
     args = parser.parse_args()
 
-    project_root = Path(__file__).resolve().parents[2]
+    project_root = Path(__file__).resolve().parents[1]
     print(f"Project root: {project_root}")
 
     steps = build_pipeline_steps(project_root)
