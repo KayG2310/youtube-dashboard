@@ -2,1265 +2,530 @@ import streamlit as st
 import pandas as pd
 import plotly.express as px
 import plotly.graph_objects as go
+from plotly.subplots import make_subplots
 import os
-import json
-import deltalake
-from pyspark.sql import SparkSession
+from pathlib import Path
 
-# Language Code Mapping
-LANG_MAP = {
-    'en': 'English', 'hi': 'Hindi', 'es': 'Spanish', 'fr': 'French',
-    'de': 'German', 'ja': 'Japanese', 'ko': 'Korean', 'ru': 'Russian',
-    'pt': 'Portuguese', 'it': 'Italian', 'zh-cn': 'Chinese (Simp)',
-    'zh-tw': 'Chinese (Trad)', 'ar': 'Arabic', 'tr': 'Turkish',
-    'vi': 'Vietnamese', 'id': 'Indonesian', 'th': 'Thai',
-    'bn': 'Bengali', 'unknown': 'Unknown'
+st.set_page_config(page_title="YouTube Trending Analytics", layout="wide", page_icon="📊")
+
+BASE_DIR = Path(__file__).resolve().parents[2]
+GOLD     = BASE_DIR / "data" / "delta_lake" / "gold"
+NEW_DATA = BASE_DIR / "new_data"
+
+CATEGORY_MAP = {
+    "Education":            "Education",
+    "Science & Technology": "Education",
+    "Entertainment":        "Entertainment",
+    "Film & Animation":     "Entertainment",
+    "News & Politics":      "News",
+    "People & Blogs":       "News",
+    "Sports":               "Sports",
+    "Gaming":               "Gaming",
+    "Music":                "Music",
+}
+GROUPED_CATEGORIES = ["Gaming", "Music", "Entertainment", "Education", "News", "Sports"]
+
+# Representative dirs per grouped category for search/thumbnail images
+CATEGORY_DIRS = {
+    "Education":     NEW_DATA / "Education",
+    "Gaming":        NEW_DATA / "Gaming",
+    "Entertainment": NEW_DATA / "entertainment",
+    "Music":         NEW_DATA / "music",
+    "News":          NEW_DATA / "politics",
+    "Sports":        NEW_DATA / "sports",
 }
 
-# Set Page Config
-st.set_page_config(page_title="YouTube Comment Analytics", layout="wide", page_icon="📊")
+PALETTE = px.colors.qualitative.Bold
 
-# --- DATA LOADING ---
+
+# ── helpers ──────────────────────────────────────────────────────────────────
 @st.cache_data
-def load_comments_data():
-    base_dir = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-    delta_path = os.path.join(base_dir, "data", "processed", "silver", "comments")
-    if not os.path.exists(delta_path):
-        return None
+def read_gold(subpath: str) -> pd.DataFrame:
+    p = GOLD / subpath
     try:
-        dt = deltalake.DeltaTable(delta_path)
-        df = dt.to_pandas()
-        if "author_name" in df.columns:
-            df = df.rename(columns={"author_name": "author"})
-        return df
+        import deltalake as dl
+        return dl.DeltaTable(str(p)).to_pandas()
     except Exception:
-        return None
-
-
-@st.cache_data
-def load_search_data():
-    # Use the existing Silver Delta loader for search data
-    return load_search_delta_silver_data()
-
+        pq = p / "_data.parquet"
+        return pd.read_parquet(str(pq)) if pq.exists() else pd.DataFrame()
 
 @st.cache_data
-def load_thumbnail_data():
-    base_dir = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-    data_path = os.path.join(base_dir, "data", "final_analytics_report.json")
-    if not os.path.exists(data_path):
-        return None
-    with open(data_path, "r") as f:
-        return json.load(f)
-
+def load_raw_trending():
+    df = pd.read_csv(NEW_DATA / "US_Trending_filtered.csv",
+                     parse_dates=["trending_date"],
+                     dayfirst=False)
+    df["category"] = df["category"].map(CATEGORY_MAP).fillna(df["category"])
+    return df
 
 @st.cache_data
-def load_thumbnail_delta_data():
-    base_dir = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-    delta_path = os.path.join(base_dir, "data", "processed", "silver", "thumbnail")
-    if not os.path.exists(delta_path):
-        return None
-    dt = deltalake.DeltaTable(delta_path)
-    df = dt.to_pandas()
-    
-    # Compute analytics
-    analytics = {
-        "avg_brightness": df["brightness"].mean(),
-        "avg_contrast": df["contrast"].mean(),
-        "avg_colorfulness": df["colorfulness"].mean(),
-        "avg_sharpness": df["sharpness"].mean(),
-        "avg_quality_score": df["thumbnail_quality_score"].mean(),
-        "top_dominant_colors": df["dominant_color"].value_counts().head(10).to_dict(),
-        "brightness_distribution": df["brightness"].describe().to_dict(),
-        "total_thumbnails": len(df)
-    }
-    return {"thumbnail_analysis": analytics}
+def load_raw_comments():
+    return pd.read_csv(NEW_DATA / "US_Trending_Comments.csv")
 
+# ── CSS ───────────────────────────────────────────────────────────────────────
+st.markdown("""
+<style>
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700&display=swap');
+html, body, [class*="css"] { font-family: 'Inter', sans-serif; }
+.stage-header {
+    background: linear-gradient(135deg,#1a1a2e,#16213e);
+    color:#fff; border-radius:14px; padding:18px 26px; margin-bottom:18px;
+}
+.stage-header h2 { margin:0; font-size:1.6rem; }
+.stage-header p  { margin:4px 0 0; opacity:.75; font-size:.9rem; }
+.kpi-card {
+    background:linear-gradient(135deg,#0f3460,#533483);
+    border-radius:12px; padding:16px 20px; color:#fff; text-align:center;
+}
+.kpi-val { font-size:2rem; font-weight:700; }
+.kpi-lbl { font-size:.8rem; opacity:.8; margin-top:4px; }
+</style>
+""", unsafe_allow_html=True)
 
-@st.cache_data
-def load_search_delta_gold_data():
-    base_dir = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-    gold_base = os.path.join(base_dir, "data", "analysis", "gold", "search_analysis")
-    paths = {
-        "descriptive": os.path.join(gold_base, "descriptive"),
-        "diagnostic": os.path.join(gold_base, "diagnostic"),
-        "predictive": os.path.join(gold_base, "predictive"),
-        "prescriptive": os.path.join(gold_base, "prescriptive"),
-        "query_performance": os.path.join(gold_base, "query_performance"),
-        "channel_leaderboard": os.path.join(gold_base, "channel_leaderboard"),
-        "publish_hour_effect": os.path.join(gold_base, "publish_hour_effect"),
-        "video_scoring": os.path.join(gold_base, "video_scoring"),
-    }
+def stage_header(title, subtitle):
+    st.markdown(f'<div class="stage-header"><h2>{title}</h2><p>{subtitle}</p></div>',
+                unsafe_allow_html=True)
 
-    required = ["descriptive", "diagnostic", "predictive", "prescriptive"]
-    if not all(os.path.exists(paths[k]) for k in required):
-        return None
+def kpi(col, value, label):
+    col.markdown(f'<div class="kpi-card"><div class="kpi-val">{value}</div>'
+                 f'<div class="kpi-lbl">{label}</div></div>', unsafe_allow_html=True)
 
-    spark = (
-        SparkSession.builder
-        .appName("SearchDeltaDashboardReader")
-        .master("local[*]")
-        .config("spark.jars.packages", "io.delta:delta-spark_2.12:3.0.0")
-        .config("spark.sql.extensions", "io.delta.sql.DeltaSparkSessionExtension")
-        .config("spark.sql.catalog.spark_catalog", "org.apache.spark.sql.delta.catalog.DeltaCatalog")
-        .getOrCreate()
-    )
-    spark.sparkContext.setLogLevel("ERROR")
+# ── SIDEBAR ───────────────────────────────────────────────────────────────────
+st.sidebar.image("https://upload.wikimedia.org/wikipedia/commons/b/b8/YouTube_Logo_2017.svg", width=130)
+st.sidebar.title("YouTube Trending")
+stage = st.sidebar.radio("📊 Analytics Stage", [
+    "1 · Descriptive", "2 · Diagnostic", "3 · Predictive", "4 · Prescriptive"])
+st.sidebar.markdown("---")
+# st.sidebar.caption("Pipeline: Kafka → Bronze → Gold (Delta Lake)")
 
-    try:
-        data = {
-            "descriptive": spark.read.format("delta").load(paths["descriptive"]).toPandas(),
-            "diagnostic": spark.read.format("delta").load(paths["diagnostic"]).toPandas(),
-            "predictive": spark.read.format("delta").load(paths["predictive"]).toPandas(),
-            "prescriptive": spark.read.format("delta").load(paths["prescriptive"]).toPandas(),
-            "query_performance": spark.read.format("delta").load(paths["query_performance"]).toPandas() if os.path.exists(paths["query_performance"]) else pd.DataFrame(),
-            "channel_leaderboard": spark.read.format("delta").load(paths["channel_leaderboard"]).toPandas() if os.path.exists(paths["channel_leaderboard"]) else pd.DataFrame(),
-            "publish_hour_effect": spark.read.format("delta").load(paths["publish_hour_effect"]).toPandas() if os.path.exists(paths["publish_hour_effect"]) else pd.DataFrame(),
-            "video_scoring": spark.read.format("delta").load(paths["video_scoring"]).toPandas() if os.path.exists(paths["video_scoring"]) else pd.DataFrame(),
-        }
-    except Exception:
-        return None
-    finally:
-        spark.stop()
-    return data
-
-
-@st.cache_data
-def load_search_delta_silver_data():
-    base_dir = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-    silver_path = os.path.join(base_dir, "data", "processed", "silver", "search")
-    if not os.path.exists(silver_path):
-        return None
-    try:
-        dt = deltalake.DeltaTable(silver_path)
-        df = dt.to_pandas()
-        for col in ("published_at", "fetched_at"):
-            if col in df.columns:
-                df[col] = pd.to_datetime(df[col], errors="coerce", utc=True)
-        return df
-    except Exception:
-        return None
-
-
-@st.cache_data
-def load_trending_delta_gold_data():
-    base_dir = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-    gold_base = os.path.join(base_dir, "data", "analysis", "gold", "trending_analysis")
-    paths = {
-        "descriptive": os.path.join(gold_base, "descriptive"),
-        "diagnostic": os.path.join(gold_base, "diagnostic"),
-        "predictive": os.path.join(gold_base, "predictive"),
-        "prescriptive": os.path.join(gold_base, "prescriptive"),
-        "channel_leaderboard": os.path.join(gold_base, "channel_leaderboard"),
-        "publish_hour_effect": os.path.join(gold_base, "publish_hour_effect"),
-        "video_scoring": os.path.join(gold_base, "video_scoring"),
-    }
-
-    required = ["descriptive", "diagnostic", "predictive", "prescriptive"]
-    if not all(os.path.exists(paths[k]) for k in required):
-        return None
-
-    spark = (
-        SparkSession.builder
-        .appName("TrendingDeltaGoldDashboardReader")
-        .master("local[*]")
-        .config("spark.jars.packages", "io.delta:delta-spark_2.12:3.0.0")
-        .config("spark.sql.extensions", "io.delta.sql.DeltaSparkSessionExtension")
-        .config("spark.sql.catalog.spark_catalog", "org.apache.spark.sql.delta.catalog.DeltaCatalog")
-        .getOrCreate()
-    )
-    spark.sparkContext.setLogLevel("ERROR")
-
-    try:
-        data = {
-            "descriptive": spark.read.format("delta").load(paths["descriptive"]).toPandas(),
-            "diagnostic": spark.read.format("delta").load(paths["diagnostic"]).toPandas(),
-            "predictive": spark.read.format("delta").load(paths["predictive"]).toPandas(),
-            "prescriptive": spark.read.format("delta").load(paths["prescriptive"]).toPandas(),
-            "channel_leaderboard": spark.read.format("delta").load(paths["channel_leaderboard"]).toPandas() if os.path.exists(paths["channel_leaderboard"]) else pd.DataFrame(),
-            "publish_hour_effect": spark.read.format("delta").load(paths["publish_hour_effect"]).toPandas() if os.path.exists(paths["publish_hour_effect"]) else pd.DataFrame(),
-            "video_scoring": spark.read.format("delta").load(paths["video_scoring"]).toPandas() if os.path.exists(paths["video_scoring"]) else pd.DataFrame(),
-        }
-    except Exception:
-        return None
-    finally:
-        spark.stop()
-    return data
-
-
-@st.cache_data
-def load_trending_delta_silver_data():
-    base_dir = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-    silver_path = os.path.join(base_dir, "data", "processed", "silver", "trending")
-    if not os.path.exists(silver_path):
-        return None
-    try:
-        dt = deltalake.DeltaTable(silver_path)
-        df = dt.to_pandas()
-        for col in ("published_at", "fetched_at"):
-            if col in df.columns:
-                df[col] = pd.to_datetime(df[col], errors="coerce", utc=True)
-        return df
-    except Exception:
-        return None
-
-
-@st.cache_data
-def load_comment_delta_gold_data():
-    base_dir = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-    gold_base = os.path.join(base_dir, "data", "analysis", "gold", "comment_analysis")
-    paths = {
-        "video_sentiment": os.path.join(gold_base, "video_sentiment_summary"),
-        "lang_sentiment": os.path.join(gold_base, "language_sentiment_summary"),
-        "sentiment_impact": os.path.join(gold_base, "sentiment_impact_analysis"),
-        "top_negative": os.path.join(gold_base, "top_negative_videos"),
-    }
-    
-    if not os.path.exists(paths["video_sentiment"]):
-        return None
-        
-    try:
-        data = {
-            "video_sentiment": deltalake.DeltaTable(paths["video_sentiment"]).to_pandas(),
-            "lang_sentiment": deltalake.DeltaTable(paths["lang_sentiment"]).to_pandas(),
-            "sentiment_impact": deltalake.DeltaTable(paths["sentiment_impact"]).to_pandas() if os.path.exists(paths["sentiment_impact"]) else pd.DataFrame(),
-            "top_negative": deltalake.DeltaTable(paths["top_negative"]).to_pandas() if os.path.exists(paths["top_negative"]) else pd.DataFrame(),
-        }
-        return data
-    except Exception:
-        return None
-
-
-df = load_comments_data()
-search_df = load_search_data()
-thumbnail_data = load_thumbnail_data()
-thumbnail_delta_data = load_thumbnail_delta_data()
-search_delta_gold = load_search_delta_gold_data()
-search_delta_silver = load_search_delta_silver_data()
-trending_delta_gold = load_trending_delta_gold_data()
-trending_delta_silver = load_trending_delta_silver_data()
-comment_delta_gold = load_comment_delta_gold_data()
-
-st.title("YouTube Analytics Dashboard")
-st.markdown("Comment sentiment and engagement, plus search-result video performance.")
-
-if df is None and search_df is None:
-    st.error("No processed data found. Run the processing pipeline first.")
-    st.stop()
-
-tab_comments, tab_search_delta, tab_trending, tab_thumbnail = st.tabs(
-    ["Comments", "Search Analytics", "Trending", "Thumbnail"]
-)
+raw = load_raw_trending()
+raw["trending_date"] = pd.to_datetime(raw["trending_date"], errors="coerce", dayfirst=False)
+raw["engagement_rate"] = ((raw["likes"] + raw["comments"]) / raw["views"].replace(0, 1)).round(4)
+raw["trending_month"] = raw["trending_date"].dt.month
+raw["trending_quarter"] = raw["trending_date"].dt.quarter
 
 # =============================================================================
-# COMMENTS TAB
+# STAGE 1 – DESCRIPTIVE
 # =============================================================================
-with tab_comments:
-    if df is None:
-        st.warning("Comments data not found in Delta Silver layer.")
-    else:
-        st.sidebar.header("Comment filters")
-        selected_video = st.sidebar.selectbox(
-            "Filter by Video ID",
-            ["All"] + list(df["video_id"].unique()),
-            key="cmt_video",
-        )
-        selected_lang = st.sidebar.multiselect(
-            "Filter by Language",
-            options=df["language"].unique(),
-            default=list(df["language"].unique()),
-            key="cmt_lang",
-        )
+if stage == "1 · Descriptive":
+    stage_header("📋 Descriptive Analytics", "What is happening? — category volume, sentiment distribution, thumbnail stats")
 
-        filtered_df = df.copy()
-        if selected_video != "All":
-            filtered_df = filtered_df[filtered_df["video_id"] == selected_video]
-        filtered_df = filtered_df[filtered_df["language"].isin(selected_lang)]
+    cat_vol   = read_gold("descriptive/category_volume")
+    monthly   = read_gold("descriptive/monthly_category_counts")
+    cat_sent  = read_gold("descriptive/category_sentiment")
+    quarterly = read_gold("descriptive/quarterly_category_counts")
 
-        if "char_count" in filtered_df.columns:
-            filtered_df["char_count"] = filtered_df["char_count"].fillna(0)
-        else:
-            # Fallback if the column is missing entirely
-            filtered_df["char_count"] = filtered_df["clean_text"].str.len().fillna(0)
+    # KPIs
+    k1,k2,k3,k4 = st.columns(4)
+    kpi(k1, f"{len(raw):,}", "Total Trending Videos")
+    kpi(k2, raw['category'].nunique(), "Categories")
+    kpi(k3, f"{raw['views'].sum()/1e9:.1f}B", "Total Views")
+    kpi(k4, f"{raw['engagement_rate'].mean()*100:.2f}%", "Avg Engagement")
+    st.markdown("<br>", unsafe_allow_html=True)
 
-        col1, col2, col3, col4 = st.columns(4)
-        with col1:
-            st.metric("Total Comments", len(filtered_df))
-        with col2:
-            st.metric("Average Likes", round(filtered_df["like_count"].mean(), 2))
-        with col3:
-            pos_count = len(filtered_df[filtered_df["sentiment_label"] == "positive"])
-            pct = round(pos_count / len(filtered_df) * 100, 1) if len(filtered_df) else 0
-            st.metric("Positive Comments", f"{pos_count} ({pct}%)")
-        with col4:
-            st.metric("Unique Contributors", filtered_df["author"].nunique())
+    # Category volume bar
+    if not cat_vol.empty:
+        c1, c2 = st.columns(2)
+        with c1:
+            st.subheader("Category Volume & Avg Views")
+            fig = px.bar(cat_vol.sort_values("avg_views", ascending=True),
+                         x="avg_views", y="category", orientation="h",
+                         color="avg_engagement", color_continuous_scale="Viridis",
+                         labels={"avg_views":"Avg Views","category":"","avg_engagement":"Avg Engagement"})
+            fig.update_layout(height=380, coloraxis_colorbar=dict(title="Eng."))
+            st.plotly_chart(fig, use_container_width=True)
+        with c2:
+            st.subheader("Category Share (by video count)")
+            fig2 = px.pie(cat_vol, names="category", values="video_count",
+                          color_discrete_sequence=PALETTE, hole=0.45)
+            fig2.update_traces(textposition="inside", textinfo="percent+label")
+            fig2.update_layout(height=380, showlegend=False)
+            st.plotly_chart(fig2, use_container_width=True)
 
-        st.divider()
+    # Monthly area chart
+    if not monthly.empty:
+        st.subheader("📅 Monthly Trending Counts per Category")
+        import calendar
+        monthly["month_name"] = monthly["trending_month"].apply(lambda m: calendar.month_abbr[int(m)])
+        fig_hm = px.area(monthly.sort_values(["trending_month", "category"]),
+                         x="month_name", y="video_count", color="category",
+                         color_discrete_sequence=PALETTE,
+                         labels={"month_name": "Month", "video_count": "Videos", "category": ""})
+        fig_hm.update_layout(height=360)
+        st.plotly_chart(fig_hm, use_container_width=True)
 
-        row1_col1, row1_col2 = st.columns(2)
-        with row1_col1:
-            st.subheader("Sentiment Distribution")
-            sentiment_counts = filtered_df["sentiment_label"].value_counts()
-            fig_sent = px.pie(
-                names=sentiment_counts.index,
-                values=sentiment_counts.values,
-                color=sentiment_counts.index,
-                color_discrete_map={
-                    "positive": "#2ecc71",
-                    "neutral": "#f1c40f",
-                    "negative": "#e74c3c",
-                },
-                hole=0.4,
-            )
+    # Sentiment: stacked % bar + VADER score diverging bar
+    if not cat_sent.empty:
+        st.subheader("💬 Comment Sentiment per Category (VADER scores)")
+        st.caption("VADER compound scores range from −1 (very negative) to +1 (very positive). Great for emoji/slang-heavy YouTube comments.")
+        c3, c4 = st.columns(2)
+        with c3:
+            # 100% stacked bar so categories with different comment volumes are comparable
+            total = cat_sent.groupby("category")["comment_count"].transform("sum")
+            cat_sent = cat_sent.copy()
+            cat_sent["pct"] = (cat_sent["comment_count"] / total * 100).round(1)
+            fig_sent = px.bar(cat_sent, x="pct", y="category", color="sentiment_label",
+                              orientation="h", barmode="stack",
+                              color_discrete_map={"positive":"#27ae60","neutral":"#f39c12","negative":"#c0392b"},
+                              labels={"pct":"% of Comments","sentiment_label":"Sentiment","category":""},
+                              title="Sentiment Mix (%)")
+            fig_sent.update_layout(height=380)
             st.plotly_chart(fig_sent, use_container_width=True)
-
-        with row1_col2:
-            st.subheader("Top Languages")
-            lang_counts = filtered_df["language"].value_counts().head(10)
-            lang_names = [LANG_MAP.get(code, code) for code in lang_counts.index]
-            fig_lang = px.bar(
-                x=lang_names,
-                y=lang_counts.values,
-                labels={"x": "Language", "y": "Count"},
-                color=lang_counts.values,
-                color_continuous_scale="Viridis",
-            )
-            st.plotly_chart(fig_lang, use_container_width=True)
-
-        st.divider()
-
-        row2_col1, row2_col2 = st.columns(2)
-        with row2_col1:
-            st.subheader("Engagement: Likes vs Sentiment")
-            fig_scatter = px.scatter(
-                filtered_df,
-                x="sentiment_score",
-                y="like_count",
-                color="sentiment_label",
-                hover_data=["clean_text"],
-                size="char_count",
-                opacity=0.6,
-                labels={
-                    "sentiment_score": "Sentiment score",
-                    "like_count": "Likes",
-                    "sentiment_label": "Sentiment",
-                    "char_count": "Comment length (characters)",
-                },
-                color_discrete_map={
-                    "positive": "#2ecc71",
-                    "neutral": "#f1c40f",
-                    "negative": "#e74c3c",
-                },
-            )
-            st.plotly_chart(fig_scatter, use_container_width=True)
-
-        with row2_col2:
-            st.subheader("Comment Length Distribution")
-            fig_hist = px.histogram(
-                filtered_df,
-                x="word_count",
-                labels={"word_count": "Comment length (words)", "count": "Comments"},
-                color_discrete_sequence=["#3498db"],
-            )
-            #TODO: Make bin size dynamic based on max word count (e.g. 20-word bins up to 200 words)
-            fig_hist.update_traces(
-                xbins=dict(
-                    start=0,
-                    end = 200,
-                    size=10,
-                )
-            )
-            st.plotly_chart(fig_hist, use_container_width=True)
-
-        st.divider()
-
-        st.subheader("Explore Comments")
-        sort_by = st.selectbox(
-            "Sort By",
-            ["like_count", "sentiment_score", "word_count"],
-            index=0,
-            key="cmt_sort",
-        )
-        st.dataframe(
-            filtered_df[
-                [
-                    "author",
-                    "like_count",
-                    "sentiment_label",
-                    "sentiment_score",
-                    "language",
-                    "clean_text",
-                ]
-            ]
-            .sort_values(by=sort_by, ascending=False)
-            .head(50),
-            use_container_width=True,
-        )
-
-        if comment_delta_gold is not None:
-            st.divider()
-            st.header("Comment Gold Insights")
-            
-            g_video = comment_delta_gold.get("video_sentiment", pd.DataFrame())
-            g_impact = comment_delta_gold.get("sentiment_impact", pd.DataFrame())
-            g_lang = comment_delta_gold.get("lang_sentiment", pd.DataFrame())
-            g_negative = comment_delta_gold.get("top_negative", pd.DataFrame())
-
-            col1, col2 = st.columns(2)
-            with col1:
-                st.subheader("Top Videos by Sentiment")
-                if not g_video.empty:
-                    # Use title if available, otherwise fallback to video_id
-                    if "title" in g_video.columns:
-                        g_video["display_name"] = g_video["title"].fillna(g_video["video_id"])
-                    else:
-                        g_video["display_name"] = g_video["video_id"]
-                    fig_gold_sent = px.bar(
-                        g_video.sort_values("avg_sentiment", ascending=False).head(10),
-                        x="avg_sentiment",
-                        y="display_name",
-                        orientation="h",
-                        color="total_comments",
-                        labels={"avg_sentiment": "Average Sentiment", "display_name": "Video Title", "total_comments": "Comments"},
-                        color_continuous_scale="RdYlGn"
-                    )
-                    st.plotly_chart(fig_gold_sent, use_container_width=True)
-                else:
-                    st.info("No video sentiment summary available.")
-
-            with col2:
-                st.subheader("Sentiment vs Video Views")
-                if not g_impact.empty:
-                    fig_impact = px.scatter(
-                        g_impact,
-                        x="avg_sentiment",
-                        y="view_count",
-                        size="total_comments",
-                        color="category",
-                        hover_data=["title", "channel_title"],
-                        log_y=True,
-                        labels={"avg_sentiment": "Sentiment", "view_count": "Views (log)"}
-                    )
-                    st.plotly_chart(fig_impact, use_container_width=True)
-                else:
-                    st.info("No sentiment impact analysis available.")
-
-            st.divider()
-            col3, col4 = st.columns(2)
-            with col3:
-                st.subheader("Language Sentiment Distribution")
-                if not g_lang.empty:
-                    g_lang["lang_name"] = g_lang["language"].map(lambda x: LANG_MAP.get(x, x))
-                    fig_lang_sent = px.bar(
-                        g_lang.sort_values("comment_count", ascending=False).head(10),
-                        x="lang_name",
-                        y="avg_sentiment",
-                        color="comment_count",
-                        labels={"avg_sentiment": "Avg Sentiment", "lang_name": "Language"}
-                    )
-                    st.plotly_chart(fig_lang_sent, use_container_width=True)
-            
-            with col4:
-                st.subheader("Videos Needing Attention (Negative Sentiment)")
-                if not g_negative.empty:
-                    st.dataframe(
-                        g_negative[["title", "channel_title", "avg_sentiment", "total_comments"]],
-                        use_container_width=True,
-                        hide_index=True
-                    )
-                else:
-                    st.info("No high-negative sentiment videos found.")
-
-#TODO: Remove this tab after testing of new search analytics using delta tables is complete.
-# =============================================================================
-# SEARCH ANALYTICS TAB
-# =============================================================================
-if False:  # search analytics hidden from UI (kept for reference)
-    if search_df is None:
-        st.warning("Search data not found in Delta Silver layer.")
-    else:
-        st.sidebar.header("Search filters")
-        cat_opts = sorted(search_df["category"].dropna().unique())
-        sel_categories = st.sidebar.multiselect(
-            "Categories",
-            options=cat_opts,
-            default=cat_opts,
-            key="search_cat",
-        )
-        min_views = st.sidebar.number_input(
-            "Minimum view count",
-            min_value=0,
-            value=0,
-            step=10_000,
-            key="search_min_views",
-        )
-        top_n_channels = st.sidebar.slider(
-            "Top channels (chart)",
-            min_value=5,
-            max_value=25,
-            value=12,
-            key="search_top_n",
-        )
-
-        s = search_df.copy()
-        if sel_categories:
-            s = s[s["category"].isin(sel_categories)]
-        s = s[s["view_count"] >= min_views]
-
-        if len(s) == 0:
-            st.warning("No videos match the current filters.")
-        else:
-            total_views = int(s["view_count"].sum())
-            med_views = int(s["view_count"].median())
-            avg_eng = float(s["engagement"].mean()) * 100
-            med_dur_min = int(s["duration_sec"].median() // 60)
-            med_dur_sec = int(s["duration_sec"].median() % 60)
-
-            m1, m2, m3, m4 = st.columns(4)
-            with m1:
-                st.metric("Videos (filtered)", len(s))
-            with m2:
-                st.metric("Total views", f"{total_views:,}")
-            with m3:
-                st.metric("Avg engagement rate", f"{avg_eng:.2f}%")
-            with m4:
-                st.metric("Median duration", f"{med_dur_min}m {med_dur_sec}s")
-
-            st.divider()
-
-            c1, c2 = st.columns(2)
-            with c1:
-                st.subheader("Videos by category")
-                cat_counts = s["category"].value_counts()
-                fig_cat = px.bar(
-                    x=cat_counts.values,
-                    y=cat_counts.index,
-                    orientation="h",
-                    labels={"x": "Videos", "y": "Category"},
-                    color=cat_counts.values,
-                    color_continuous_scale="Blues",
-                )
-                fig_cat.update_layout(yaxis={"categoryorder": "total ascending"})
-                st.plotly_chart(fig_cat, use_container_width=True)
-
-            with c2:
-                st.subheader("Category mix")
-                fig_pie = px.pie(
-                    names=cat_counts.index,
-                    values=cat_counts.values,
-                    hole=0.45,
-                )
-                st.plotly_chart(fig_pie, use_container_width=True)
-
-            st.divider()
-
-            c3, c4 = st.columns(2)
-            with c3:
-                st.subheader("Views vs likes (log-scaled views)")
-                fig_vl = px.scatter(
-                    s,
-                    x="view_count",
-                    y="like_count",
-                    color="category",
-                    hover_data=["title", "channel_title"],
-                    size="comment_count",
-                    size_max=40,
-                    opacity=0.75,
-                    log_x=True,
-                    labels={
-                        "view_count": "Views",
-                        "like_count": "Likes",
-                        "category": "Category",
-                        "comment_count": "Comments",
-                    },
-                )
-                st.plotly_chart(fig_vl, use_container_width=True)
-
-            with c4:
-                st.subheader("View count distribution")
-                fig_views = px.histogram(
-                    s,
-                    x="view_count",
-                    nbins=40,
-                    labels={"view_count": "Views", "count": "Videos"},
-                    color_discrete_sequence=["#9b59b6"],
-                )
-                fig_views.update_xaxes(type="log", title="View count (log scale)")
-                st.plotly_chart(fig_views, use_container_width=True)
-
-            st.divider()
-
-            c5, c6 = st.columns(2)
-            with c5:
-                st.subheader("Engagement rate distribution")
-                fig_eng = px.histogram(
-                    s,
-                    x=s["engagement"] * 100,
-                    nbins=35,
-                    labels={"x": "Engagement rate (%)", "y": "Count"},
-                    color_discrete_sequence=["#1abc9c"],
-                )
-                st.plotly_chart(fig_eng, use_container_width=True)
-
-            with c6:
-                st.subheader("Video age (days)")
-                fig_age = px.histogram(
-                    s,
-                    x="video_age_days",
-                    nbins=30,
-                    labels={"video_age_days": "Video age (days)", "count": "Videos"},
-                    color_discrete_sequence=["#e67e22"],
-                )
-                st.plotly_chart(fig_age, use_container_width=True)
-
-            st.divider()
-
-            st.subheader(f"Top {top_n_channels} channels by total views")
-            ch = (
-                s.groupby("channel_title", as_index=False)
-                .agg(videos=("video_id", "count"), total_views=("view_count", "sum"))
-                .sort_values("total_views", ascending=False)
-                .head(top_n_channels)
-            )
-            fig_ch = px.bar(
-                ch,
-                x="total_views",
-                y="channel_title",
+        with c4:
+            # Diverging bar: avg VADER score, centered at 0
+            avg_s = cat_sent.groupby("category")["avg_score"].mean().reset_index()
+            avg_s = avg_s.sort_values("avg_score")
+            avg_s["color"] = avg_s["avg_score"].apply(lambda v: "#27ae60" if v >= 0 else "#c0392b")
+            fig_s2 = go.Figure(go.Bar(
+                x=avg_s["avg_score"], y=avg_s["category"],
                 orientation="h",
-                color="videos",
-                labels={"total_views": "Total views", "channel_title": "Channel", "videos": "Videos"},
-                color_continuous_scale="Viridis",
-            )
-            fig_ch.update_layout(yaxis={"categoryorder": "total ascending"})
-            st.plotly_chart(fig_ch, use_container_width=True)
-
-            st.divider()
-
-            st.subheader("Search results table")
-            sort_search = st.selectbox(
-                "Sort by",
-                [
-                    "view_count",
-                    "like_count",
-                    "engagement",
-                    "comment_count",
-                    "video_age_days",
-                    "duration_sec",
-                ],
-                key="search_tbl_sort",
-            )
-            display_cols = [
-                "title",
-                "channel_title",
-                "category",
-                "view_count",
-                "like_count",
-                "comment_count",
-                "engagement",
-                "duration_sec",
-                "video_age_days",
-                "published_at",
-            ]
-            show = [c for c in display_cols if c in s.columns]
-            tbl = s[show].sort_values(by=sort_search, ascending=False)
-            st.dataframe(tbl, use_container_width=True, hide_index=True)
-
-# =============================================================================
-# SEARCH DELTA GOLD TAB
-# =============================================================================
-with tab_search_delta:
-    st.header("Search Analytics")
-    if search_delta_silver is None:
-        st.warning("Search Silver Delta data not found. Run `SearchDataProcessorDelta.py` first.")
-    else:
-        s = search_delta_silver.copy()
-        for col in ("published_at", "fetched_at"):
-            if col in s.columns:
-                s[col] = pd.to_datetime(s[col], errors="coerce", utc=True)
-        cat_opts_delta = sorted(s["category"].dropna().unique()) if "category" in s.columns else []
-        sel_categories_delta = st.multiselect(
-            "Categories",
-            options=cat_opts_delta,
-            default=cat_opts_delta,
-            key="search_delta_cat",
-        )
-        min_views_delta = st.number_input(
-            "Minimum view count",
-            min_value=0,
-            value=0,
-            step=10_000,
-            key="search_delta_min_views",
-        )
-        if sel_categories_delta:
-            s = s[s["category"].isin(sel_categories_delta)]
-        s = s[s["view_count"] >= min_views_delta]
-
-        if len(s) == 0:
-            st.warning("No videos match the current Delta filters.")
-        else:
-            total_views = int(s["view_count"].sum())
-            avg_eng = float(s["engagement"].mean()) * 100
-            med_dur_min = int(s["duration_sec"].median() // 60)
-            med_dur_sec = int(s["duration_sec"].median() % 60)
-
-            dm1, dm2, dm3, dm4 = st.columns(4)
-            with dm1:
-                st.metric("Total number of videos", len(s))
-            with dm2:
-                st.metric("Total views", f"{total_views:,}")
-            with dm3:
-                st.metric("Avg engagement rate", f"{avg_eng:.2f}%")
-            with dm4:
-                st.metric("Median duration", f"{med_dur_min}m {med_dur_sec}s")
-
-            st.divider()
-
-            c1, c2 = st.columns(2)
-            with c1:
-                st.subheader("Videos by category")
-                cat_counts = s["category"].value_counts()
-                fig_cat = px.bar(
-                    x=cat_counts.values,
-                    y=cat_counts.index,
-                    orientation="h",
-                    labels={"x": "Videos", "y": "Category"},
-                    color=cat_counts.values,
-                    color_continuous_scale="Blues",
-                )
-                fig_cat.update_layout(yaxis={"categoryorder": "total ascending"})
-                st.plotly_chart(fig_cat, use_container_width=True)
-            with c2:
-                st.subheader("Category mix")
-                fig_pie = px.pie(
-                    names=cat_counts.index,
-                    values=cat_counts.values,
-                    hole=0.45,
-                )
-                st.plotly_chart(fig_pie, use_container_width=True)
-
-            st.divider()
-            c3, c4 = st.columns(2)
-            with c3:
-                st.subheader("Views vs likes")
-                fig_vl = px.scatter(
-                    s,
-                    x="view_count",
-                    y="like_count",
-                    color="category",
-                    hover_data=["title", "channel_title"],
-                    size="comment_count",
-                    size_max=40,
-                    opacity=0.75,
-                    log_x=True,
-                    labels={
-                        "view_count": "Views",
-                        "like_count": "Likes",
-                        "category": "Category",
-                        "comment_count": "Comments",
-                    },
-                )
-                st.plotly_chart(fig_vl, use_container_width=True)
-            with c4:
-                st.subheader("Video age (how much old)")
-                fig_age = px.histogram(
-                    s,
-                    x="video_age_days",
-                    nbins=30,
-                    labels={"video_age_days": "Video age (days)", "count": "Videos"},
-                    color_discrete_sequence=["#e67e22"],
-                )
-                st.plotly_chart(fig_age, use_container_width=True)
-
-            if search_delta_gold is not None:
-                descriptive_df = search_delta_gold.get("descriptive", pd.DataFrame())
-                diagnostic_df = search_delta_gold.get("diagnostic", pd.DataFrame())
-                predictive_df = search_delta_gold.get("predictive", pd.DataFrame())
-                prescriptive_df = search_delta_gold.get("prescriptive", pd.DataFrame())
-                query_df = search_delta_gold.get("query_performance", pd.DataFrame())
-                channel_df = search_delta_gold.get("channel_leaderboard", pd.DataFrame())
-                hour_df = search_delta_gold.get("publish_hour_effect", pd.DataFrame())
-                score_df = search_delta_gold.get("video_scoring", pd.DataFrame())
-
-                st.divider()
-                st.subheader("**Descriptive analysis**")
-
-                if not descriptive_df.empty and {"category", "avg_views"}.issubset(descriptive_df.columns):
-                    st.caption("Shows category-level performance averages to summarize what is happening in the dataset.")
-                    fig_desc_delta = px.bar(
-                        descriptive_df.sort_values("avg_views", ascending=False).head(10),
-                        x="category",
-                        y="avg_views",
-                        color="avg_engagement" if "avg_engagement" in descriptive_df.columns else None,
-                        labels={"category": "Category", "avg_views": "Average views", "avg_engagement": "Average engagement"},
-                    )
-                    st.plotly_chart(fig_desc_delta, use_container_width=True)
-                    st.dataframe(descriptive_df, use_container_width=True, hide_index=True)
-
-                st.subheader("**Diagnostic analysis**")
-                if not diagnostic_df.empty and {"metric_pair", "correlation"}.issubset(diagnostic_df.columns):
-                    st.caption("Shows correlation strengths to explain which metrics move together and why performance patterns appear.")
-                    diag_map = {
-                        str(row["metric_pair"]): float(row["correlation"])
-                        for _, row in diagnostic_df.iterrows()
-                        if pd.notna(row["correlation"])
-                    }
-                    dd1, dd2, dd3 = st.columns(3)
-                    with dd1:
-                        st.metric(
-                            "Views vs likes correlation",
-                            f"{diag_map.get('view_count_like_count', 0.0):.3f}",
-                        )
-                    with dd2:
-                        st.metric(
-                            "Views vs comments correlation",
-                            f"{diag_map.get('view_count_comment_count', 0.0):.3f}",
-                        )
-                    with dd3:
-                        st.metric(
-                            "Engagement vs duration correlation",
-                            f"{diag_map.get('engagement_duration_sec', 0.0):.3f}",
-                        )
-                    st.dataframe(diagnostic_df, use_container_width=True, hide_index=True)
-
-                st.subheader("**Predictive analysis**")
-                if not predictive_df.empty and {"actual_view_count", "predicted_view_count"}.issubset(predictive_df.columns):
-                    predictive_df = predictive_df.copy()
-                    predictive_df["predicted_view_count"] = predictive_df["predicted_view_count"].clip(lower=0)
-                    st.caption("Compares model-predicted views with actual views to estimate how well future performance can be forecasted.")
-                    fig_pred_delta = px.scatter(
-                        predictive_df,
-                        x="actual_view_count",
-                        y="predicted_view_count",
-                        labels={
-                            "actual_view_count": "Actual views",
-                            "predicted_view_count": "Predicted views",
-                        },
-                        trendline="ols",
-                    )
-                    st.plotly_chart(fig_pred_delta, use_container_width=True)
-                    st.dataframe(predictive_df.head(200), use_container_width=True, hide_index=True)
-
-                st.subheader("**Prescriptive analysis**")
-                if not prescriptive_df.empty:
-                    st.caption("Highlights best-performing category strategies as actionable guidance for what to do next.")
-                    if {"category", "best_avg_views"}.issubset(prescriptive_df.columns):
-                        fig_presc_delta = px.bar(
-                            prescriptive_df.sort_values("best_avg_views", ascending=False).head(12),
-                            x="best_avg_views",
-                            y="category",
-                            orientation="h",
-                            color="best_avg_engagement" if "best_avg_engagement" in prescriptive_df.columns else None,
-                            labels={
-                                "best_avg_views": "Best average views",
-                                "category": "Category",
-                                "best_avg_engagement": "Best average engagement",
-                            },
-                        )
-                        fig_presc_delta.update_layout(yaxis={"categoryorder": "total ascending"})
-                        st.plotly_chart(fig_presc_delta, use_container_width=True)
-                    st.dataframe(prescriptive_df, use_container_width=True, hide_index=True)
-
-                st.divider()
-                st.subheader("Query performance")
-                if not query_df.empty and {"search_query", "avg_views"}.issubset(query_df.columns):
-                    fig_query = px.bar(
-                        query_df.sort_values("avg_views", ascending=False).head(12),
-                        x="search_query",
-                        y="avg_views",
-                        color="avg_engagement" if "avg_engagement" in query_df.columns else None,
-                        labels={
-                            "search_query": "Search query",
-                            "avg_views": "Average views",
-                            "avg_engagement": "Average engagement",
-                        },
-                    )
-                    st.plotly_chart(fig_query, use_container_width=True)
-
-                st.divider()
-                st.subheader("Top channels by views")
-                if not channel_df.empty and {"channel_title", "avg_views"}.issubset(channel_df.columns):
-                    fig_channel = px.bar(
-                        channel_df.sort_values("avg_views", ascending=False).head(12),
-                        x="avg_views",
-                        y="channel_title",
-                        orientation="h",
-                        color="videos" if "videos" in channel_df.columns else None,
-                        labels={"avg_views": "Average views", "channel_title": "Channel", "videos": "Videos"},
-                    )
-                    fig_channel.update_layout(yaxis={"categoryorder": "total ascending"})
-                    st.plotly_chart(fig_channel, use_container_width=True)
-
-                st.divider()
-                st.subheader("Top scored videos")
-                if not score_df.empty:
-                    st.caption("Score combines views, engagement, and freshness (higher score means better overall performance).")
-                    cols = [c for c in ["title", "channel_title", "category", "search_query", "view_count", "engagement", "score"] if c in score_df.columns]
-                    st.dataframe(score_df[cols].sort_values("score", ascending=False).head(25), use_container_width=True, hide_index=True)
-
-                st.divider()
-                st.subheader("Search results table")
-                sort_search_delta = st.selectbox(
-                    "Sort by",
-                    [
-                        "view_count",
-                        "like_count",
-                        "engagement",
-                        "comment_count",
-                        "video_age_days",
-                        "duration_sec",
-                    ],
-                    key="search_delta_tbl_sort",
-                )
-                display_cols_delta = [
-                    "title",
-                    "channel_title",
-                    "category",
-                    "search_query",
-                    "view_count",
-                    "like_count",
-                    "comment_count",
-                    "engagement",
-                    "duration_sec",
-                    "video_age_days",
-                    "published_at",
-                ]
-                show_delta = [c for c in display_cols_delta if c in s.columns]
-                tbl_delta = s[show_delta].sort_values(by=sort_search_delta, ascending=False)
-                st.dataframe(tbl_delta, use_container_width=True, hide_index=True)
-
-# =============================================================================
-# TRENDING TAB
-# =============================================================================
-with tab_trending:
-    st.header("YouTube Trending Analytics")
-
-    if trending_delta_silver is not None:
-        t = trending_delta_silver.copy()
-        for col in ("published_at", "fetched_at"):
-            if col in t.columns:
-                t[col] = pd.to_datetime(t[col], errors="coerce", utc=True)
-
-        cat_opts = sorted(t["category"].dropna().unique()) if "category" in t.columns else []
-        selected_categories = st.multiselect(
-            "Categories",
-            options=cat_opts,
-            default=cat_opts,
-            key="trending_delta_categories",
-        )
-        min_views = st.number_input(
-            "Minimum view count",
-            min_value=0,
-            value=0,
-            step=10_000,
-            key="trending_delta_min_views",
-        )
-
-        if selected_categories:
-            t = t[t["category"].isin(selected_categories)]
-        if "view_count" in t.columns:
-            t = t[t["view_count"] >= min_views]
-
-        if t.empty:
-            st.warning("No trending videos match the current filters.")
-        else:
-            total_views = int(t["view_count"].sum())
-            avg_engagement = float(t["engagement"].mean()) * 100 if "engagement" in t.columns else 0.0
-            median_likes = int(t["like_count"].median()) if "like_count" in t.columns else 0
-            median_comments = int(t["comment_count"].median()) if "comment_count" in t.columns else 0
-
-            m1, m2, m3, m4 = st.columns(4)
-            with m1:
-                st.metric("Trending videos", len(t))
-            with m2:
-                st.metric("Total views", f"{total_views:,}")
-            with m3:
-                st.metric("Avg engagement rate", f"{avg_engagement:.2f}%")
-            with m4:
-                st.metric("Median likes/comments", f"{median_likes:,} / {median_comments:,}")
-
-            st.divider()
-            col1, col2 = st.columns(2)
-            with col1:
-                st.subheader("Videos by category")
-                cat_counts = t["category"].value_counts()
-                fig_cat = px.bar(
-                    x=cat_counts.values,
-                    y=cat_counts.index,
-                    orientation="h",
-                    labels={"x": "Videos", "y": "Category"},
-                    color=cat_counts.values,
-                    color_continuous_scale="Blues",
-                )
-                fig_cat.update_layout(yaxis={"categoryorder": "total ascending"})
-                st.plotly_chart(fig_cat, use_container_width=True)
-            with col2:
-                st.subheader("Category mix")
-                fig_mix = px.pie(names=cat_counts.index, values=cat_counts.values, hole=0.45)
-                st.plotly_chart(fig_mix, use_container_width=True)
-
-            col3, col4 = st.columns(2)
-            with col3:
-                st.subheader("Views vs likes")
-                fig_vl = px.scatter(
-                    t,
-                    x="view_count",
-                    y="like_count",
-                    color="category",
-                    hover_data=["title", "channel_title"],
-                    size="comment_count",
-                    size_max=40,
-                    opacity=0.75,
-                    log_x=True,
-                )
-                st.plotly_chart(fig_vl, use_container_width=True)
-            with col4:
-                st.subheader("Video age")
-                fig_age = px.histogram(t, x="video_age_days", nbins=30)
-                st.plotly_chart(fig_age, use_container_width=True)
-
-            if trending_delta_gold is not None:
-                descriptive_df = trending_delta_gold.get("descriptive", pd.DataFrame())
-                diagnostic_df = trending_delta_gold.get("diagnostic", pd.DataFrame())
-                predictive_df = trending_delta_gold.get("predictive", pd.DataFrame())
-                prescriptive_df = trending_delta_gold.get("prescriptive", pd.DataFrame())
-                channel_df = trending_delta_gold.get("channel_leaderboard", pd.DataFrame())
-                hour_df = trending_delta_gold.get("publish_hour_effect", pd.DataFrame())
-                score_df = trending_delta_gold.get("video_scoring", pd.DataFrame())
-
-                st.divider()
-                st.subheader("Descriptive analysis")
-                if not descriptive_df.empty and {"category", "avg_views"}.issubset(descriptive_df.columns):
-                    fig_desc = px.bar(
-                        descriptive_df.sort_values("avg_views", ascending=False).head(12),
-                        x="category",
-                        y="avg_views",
-                        color="avg_engagement" if "avg_engagement" in descriptive_df.columns else None,
-                    )
-                    fig_desc.update_layout(xaxis_tickangle=-45)
-                    st.plotly_chart(fig_desc, use_container_width=True)
-                    st.dataframe(descriptive_df, use_container_width=True, hide_index=True)
-
-                st.subheader("Diagnostic analysis")
-                if not diagnostic_df.empty and {"metric_pair", "correlation"}.issubset(diagnostic_df.columns):
-                    diag_map = {
-                        str(row["metric_pair"]): float(row["correlation"])
-                        for _, row in diagnostic_df.iterrows()
-                        if pd.notna(row["correlation"])
-                    }
-                    d1, d2, d3, d4 = st.columns(4)
-                    with d1:
-                        st.metric("Views vs likes", f"{diag_map.get('view_count_like_count', 0.0):.3f}")
-                    with d2:
-                        st.metric("Views vs comments", f"{diag_map.get('view_count_comment_count', 0.0):.3f}")
-                    with d3:
-                        st.metric("Engagement vs duration", f"{diag_map.get('engagement_duration_sec', 0.0):.3f}")
-                    with d4:
-                        st.metric("Title length vs views", f"{diag_map.get('title_length_view_count', 0.0):.3f}")
-                    st.dataframe(diagnostic_df, use_container_width=True, hide_index=True)
-
-                st.subheader("Predictive analysis")
-                if not predictive_df.empty and {"actual_like_count", "predicted_like_count"}.issubset(predictive_df.columns):
-                    predictive_df = predictive_df.copy()
-                    predictive_df["predicted_like_count"] = predictive_df["predicted_like_count"].clip(lower=0)
-                    fig_pred = px.scatter(
-                        predictive_df,
-                        x="actual_like_count",
-                        y="predicted_like_count",
-                        trendline="ols",
-                    )
-                    st.plotly_chart(fig_pred, use_container_width=True)
-                    st.dataframe(predictive_df.head(200), use_container_width=True, hide_index=True)
-
-                st.subheader("Prescriptive analysis")
-                if not prescriptive_df.empty:
-                    if {"category", "best_avg_views"}.issubset(prescriptive_df.columns):
-                        fig_presc = px.bar(
-                            prescriptive_df.sort_values("best_avg_views", ascending=False).head(12),
-                            x="best_avg_views",
-                            y="category",
-                            orientation="h",
-                            color="best_avg_engagement" if "best_avg_engagement" in prescriptive_df.columns else None,
-                        )
-                        fig_presc.update_layout(yaxis={"categoryorder": "total ascending"})
-                        st.plotly_chart(fig_presc, use_container_width=True)
-                    st.dataframe(prescriptive_df, use_container_width=True, hide_index=True)
-
-                st.divider()
-                st.subheader("Top channels by average views")
-                if not channel_df.empty and {"channel_title", "avg_views"}.issubset(channel_df.columns):
-                    fig_channel = px.bar(
-                        channel_df.sort_values("avg_views", ascending=False).head(12),
-                        x="avg_views",
-                        y="channel_title",
-                        orientation="h",
-                        color="videos" if "videos" in channel_df.columns else None,
-                    )
-                    fig_channel.update_layout(yaxis={"categoryorder": "total ascending"})
-                    st.plotly_chart(fig_channel, use_container_width=True)
-
-                st.subheader("Best publish hour")
-                if not hour_df.empty and {"publish_hour", "avg_views"}.issubset(hour_df.columns):
-                    hour_df_sorted = hour_df.sort_values("publish_hour").copy()
-                    best_idx = hour_df_sorted["avg_views"].idxmax()
-                    best_hour = int(hour_df_sorted.loc[best_idx, "publish_hour"])
-                    best_avg_views = float(hour_df_sorted.loc[best_idx, "avg_views"])
-                    st.metric("Best publish hour", f"{best_hour:02d}:00")
-                    st.caption(f"Highest average views at this hour: {best_avg_views:,.0f}")
-                    fig_hour = px.line(hour_df_sorted, x="publish_hour", y="avg_views", markers=True)
-                    fig_hour.add_scatter(
-                        x=[best_hour],
-                        y=[best_avg_views],
-                        mode="markers+text",
-                        text=[f"Best: {best_hour:02d}:00"],
-                        textposition="top center",
-                        marker=dict(size=12, color="#e74c3c"),
-                        name="Best hour",
-                    )
-                    st.plotly_chart(fig_hour, use_container_width=True)
-
-                st.divider()
-                st.subheader("Top scored trending videos")
-                if not score_df.empty:
-                    cols = [c for c in ["title", "channel_title", "category", "view_count", "like_count", "engagement", "score"] if c in score_df.columns]
-                    st.dataframe(score_df[cols].sort_values("score", ascending=False).head(25), use_container_width=True, hide_index=True)
-
-            st.divider()
-            st.subheader("Trending videos table")
-            sort_col = st.selectbox(
-                "Sort by",
-                ["view_count", "like_count", "engagement", "comment_count", "video_age_days", "duration_sec"],
-                key="trending_delta_sort",
-            )
-            display_cols = [
-                "title",
-                "channel_title",
-                "category",
-                "view_count",
-                "like_count",
-                "comment_count",
-                "engagement",
-                "duration_sec",
-                "video_age_days",
-                "published_at",
-            ]
-            show_cols = [c for c in display_cols if c in t.columns]
-            st.dataframe(t[show_cols].sort_values(by=sort_col, ascending=False), use_container_width=True, hide_index=True)
-
-    else:
-        st.warning("Trending Silver Delta data not found. Run `TrendingDataProcessorDelta.py` first.")
-
-# =============================================================================
-# THUMBNAIL ANALYTICS TAB 
-# =============================================================================
-with tab_thumbnail:
-    st.markdown("""
-        <style>
-        [data-testid="stMetricValue"] { font-size: 28px; color: #1f77b4; }
-        .thumb-box { padding: 20px; border-radius: 10px; background-color: #f0f2f6; margin-bottom: 10px; }
-        </style>
-    """, unsafe_allow_html=True)
-
-    if thumbnail_data is None or thumbnail_delta_data is None:
-        st.error("Analytics data missing. Please ensure Spark processing is complete.")
-    else:
-
-        # ==========================================
-        # 1. DESCRIPTIVE ANALYTICS (What is happening?)
-        # ==========================================
-        st.subheader(" 1. Descriptive Analytics")
-        st.caption("Overview of the current state and visual attributes of the dataset.")
-        
-        col_m1, col_m2, col_m3, col_m4 = st.columns(4)
-        with col_m1:
-            st.metric("Total Visuals", f"{thumbnail_delta_data['thumbnail_analysis']['total_thumbnails']:,}")
-        with col_m2:
-            st.metric("Avg Quality Score", f"{thumbnail_delta_data['thumbnail_analysis']['avg_quality_score']:.1f}")
-        with col_m3:
-            st.metric("Optimal Hour", f"{thumbnail_data['level_4_prescriptive'].get('optimal_hour')}:00")
-        with col_m4:
-            st.metric("Processed Records", f"{thumbnail_data.get('big_data_metrics', {}).get('total_records_processed', 'N/A')}")
-
-        col_r1, col_r2 = st.columns([1, 1])
-        with col_r1:
-            st.markdown("**Visual Quality Profile**")
-            ta = thumbnail_delta_data["thumbnail_analysis"]
-            radar_df = pd.DataFrame(dict(
-                r=[ta['avg_brightness'], ta['avg_contrast'], ta['avg_colorfulness'], ta['avg_sharpness']/10], 
-                theta=['Brightness', 'Contrast', 'Colorfulness', 'Sharpness (Scaled)']
+                marker_color=avg_s["color"],
+                text=avg_s["avg_score"].round(3),
+                textposition="outside"
             ))
-            fig_radar = px.line_polar(radar_df, r='r', theta='theta', line_close=True, range_r=[0, 150])
-            fig_radar.update_traces(fill='toself', line_color='#636EFA')
+            fig_s2.add_vline(x=0, line_dash="dash", line_color="white", opacity=0.5)
+            fig_s2.update_layout(height=380, xaxis_title="Avg VADER Compound Score",
+                                  title="Avg Sentiment Score by Category",
+                                  xaxis_range=[-0.5, 0.5])
+            st.plotly_chart(fig_s2, use_container_width=True)
+
+    # Engagement funnel: views → likes → comments per category
+    if not cat_vol.empty:
+        st.subheader("📊 Engagement Funnel — Views → Likes → Comments")
+        funnel_data = cat_vol.sort_values("avg_views", ascending=False)
+        fig_funnel = go.Figure()
+        fig_funnel.add_trace(go.Bar(name="Avg Views", x=funnel_data["category"],
+                                    y=funnel_data["avg_views"], marker_color="#6C63FF"))
+        fig_funnel.add_trace(go.Bar(name="Avg Likes", x=funnel_data["category"],
+                                    y=funnel_data["avg_likes"], marker_color="#FF6584"))
+        fig_funnel.add_trace(go.Bar(name="Avg Comments", x=funnel_data["category"],
+                                    y=funnel_data["avg_comments"], marker_color="#43BCCD"))
+        fig_funnel.update_layout(barmode="group", height=380,
+                                  xaxis_tickangle=-30, yaxis_title="Count")
+        st.plotly_chart(fig_funnel, use_container_width=True)
+
+    # Thumbnail overview images
+    st.subheader("🖼 Thumbnail Attribute Averages")
+    img1 = NEW_DATA / "Thumbnail_Attributes_Averages.jpeg"
+    img2 = NEW_DATA / "Thumbnail_Engagement_Averages.jpeg"
+    tc1, tc2 = st.columns(2)
+    if img1.exists(): tc1.image(str(img1), caption="Attribute Averages", use_column_width=True)
+    if img2.exists(): tc2.image(str(img2), caption="Engagement Averages", use_column_width=True)
+
+# =============================================================================
+# STAGE 2 – DIAGNOSTIC
+# =============================================================================
+elif stage == "2 · Diagnostic":
+    stage_header("🔍 Diagnostic Analytics",
+                 "Why did it happen? — search trends, sentiment drivers, thumbnail correlations")
+
+    heatmap_df = read_gold("diagnostic/month_category_heatmap")
+    sent_eng   = read_gold("diagnostic/sentiment_vs_engagement")
+    sent_stack = read_gold("diagnostic/sentiment_stack")
+    thumb_corr = read_gold("diagnostic/thumbnail_category_correlation")
+
+    # Month × category grouped bar
+    if not heatmap_df.empty:
+        st.subheader("🗓 When Each Category Trended (Monthly Breakdown)")
+        import calendar
+        heatmap_df["month_name"] = heatmap_df["trending_month"].apply(lambda m: calendar.month_abbr[int(m)])
+        fig_h = px.bar(heatmap_df.sort_values(["trending_month", "category"]),
+                       x="month_name", y="video_count", color="category", barmode="group",
+                       color_discrete_sequence=PALETTE,
+                       labels={"month_name": "Month", "video_count": "Video Count", "category": ""})
+        fig_h.update_layout(height=380)
+        st.plotly_chart(fig_h, use_container_width=True)
+
+    # Search trends per category
+    st.subheader("🔎 Google Search Trends per Category")
+    cats_with_search = {k: v for k, v in CATEGORY_DIRS.items() if (v / "search.jpeg").exists()}
+    if cats_with_search:
+        cols_per_row = 3
+        items = list(cats_with_search.items())
+        for row_start in range(0, len(items), cols_per_row):
+            row_items = items[row_start:row_start + cols_per_row]
+            cols = st.columns(cols_per_row)
+            for col, (cat, path) in zip(cols, row_items):
+                col.image(str(path / "search.jpeg"), caption=f"{cat} — Search Trend", use_column_width=True)
+
+    # Sentiment vs engagement scatter
+    if not sent_eng.empty:
+        st.subheader("💡 Comment Sentiment vs Category Engagement")
+        c1, c2 = st.columns(2)
+        with c1:
+            fig_se = px.scatter(sent_eng, x="avg_sentiment", y="avg_engagement",
+                                size="total_comments", color="category",
+                                color_discrete_sequence=PALETTE,
+                                hover_data=["pct_positive","pct_negative","avg_views"],
+                                labels={"avg_sentiment":"Avg Comment Sentiment",
+                                        "avg_engagement":"Avg Engagement Rate",
+                                        "total_comments":"# Comments"})
+            fig_se.update_layout(height=380)
+            st.plotly_chart(fig_se, use_container_width=True)
+        with c2:
+            # pct positive/negative grouped bar
+            melt = sent_eng[["category","pct_positive","pct_negative"]].melt(
+                id_vars="category", var_name="type", value_name="pct")
+            melt["type"] = melt["type"].map({"pct_positive":"Positive","pct_negative":"Negative"})
+            fig_pct = px.bar(melt, x="category", y="pct", color="type", barmode="group",
+                             color_discrete_map={"Positive":"#2ecc71","Negative":"#e74c3c"},
+                             labels={"pct":"Fraction of Comments","category":""})
+            fig_pct.update_layout(height=380, xaxis_tickangle=-30)
+            st.plotly_chart(fig_pct, use_container_width=True)
+
+    # Thumbnail correlation heatmap
+    if not thumb_corr.empty:
+        st.subheader("🖼 Thumbnail Visual Attributes vs Engagement")
+        c3, c4 = st.columns(2)
+        with c3:
+            # Radar per category
+            cats = thumb_corr["category"].tolist()
+            fig_radar = go.Figure()
+            metrics = ["brightness_avg","contrast_avg","colorfulness_avg"]
+            labels  = ["Brightness","Contrast","Colorfulness"]
+            for _, row in thumb_corr.iterrows():
+                vals = [row[m] for m in metrics] + [row[metrics[0]]]
+                fig_radar.add_trace(go.Scatterpolar(r=vals, theta=labels+[labels[0]],
+                                                    fill="toself", name=row["category"]))
+            fig_radar.update_layout(polar=dict(radialaxis=dict(range=[0,1])),
+                                    height=420, legend=dict(font=dict(size=9)))
             st.plotly_chart(fig_radar, use_container_width=True)
+        with c4:
+            fig_tc = px.scatter(thumb_corr, x="colorfulness_avg", y="avg_engagement",
+                                size="contrast_avg", color="category",
+                                color_discrete_sequence=PALETTE,
+                                labels={"colorfulness_avg":"Colorfulness","avg_engagement":"Avg Engagement"},
+                                hover_data=["brightness_avg","contrast_avg"])
+            fig_tc.update_layout(height=420)
+            st.plotly_chart(fig_tc, use_container_width=True)
 
-        with col_r2:
-            st.markdown("**Color Dominance Hierarchy**")
-            colors_dict = thumbnail_delta_data["thumbnail_analysis"]["top_dominant_colors"]
-            colors_df = pd.DataFrame(list(colors_dict.items()), columns=["Color", "Count"])
-            fig_tree = px.treemap(colors_df, path=['Color'], values='Count', color='Count',
-                                 color_continuous_scale='RdBu')
-            st.plotly_chart(fig_tree, use_container_width=True)
-            
-        with st.expander("View Raw Multi-Modal Statistics"):
-            desc_df = pd.DataFrame(thumbnail_data["level_1_descriptive"])
-            st.table(desc_df.sort_values(by="avg_views", ascending=False))
+    # Per-category thumbnail scatter images
+    st.subheader("📸 Category Thumbnail Engagement Scatter Plots")
+    thumb_img_cats = {k: v for k, v in CATEGORY_DIRS.items()
+                      if (v / "thumbnail_engagement_scatter.jpeg").exists()}
+    if thumb_img_cats:
+        items = list(thumb_img_cats.items())
+        for row_start in range(0, len(items), 3):
+            row_items = items[row_start:row_start + 3]
+            cols = st.columns(3)
+            for col, (cat, path) in zip(cols, row_items):
+                col.image(str(path / "thumbnail_engagement_scatter.jpeg"),
+                          caption=f"{cat}", use_column_width=True)
 
-        st.divider()
+# =============================================================================
+# STAGE 3 – PREDICTIVE
+# =============================================================================
+elif stage == "3 · Predictive":
+    stage_header("🔮 Predictive Analytics",
+                 "Ridge regression (cyclic month encoding + category one-hot) → 3-month forecast with confidence bands")
 
-        # ==========================================
-        # 2. DIAGNOSTIC ANALYTICS (Why is it happening?)
-        # ==========================================
-        st.subheader("2. Diagnostic Analytics")
-        st.caption("Correlations indicating which factors drive performance.")
+    import calendar as _cal
+    forecast = read_gold("predictive/category_forecast")
+    prob_df  = read_gold("predictive/category_trend_probability")
+    norm_vol = read_gold("predictive/monthly_norm_volume")
+    model_fit = read_gold("predictive/model_fit")
+
+    # ── Model fit: actual vs predicted ──────────────────────────────────────
+    if not model_fit.empty and "predicted_video_count" in model_fit.columns:
+        st.subheader("🤖 Ridge Model — Actual vs Predicted (training data)")
+        st.caption("Compares Ridge model predictions against actual training data over time. Closer lines = better fit.")
+        melted_fit = model_fit.rename(columns={"video_count": "Actual", "predicted_video_count": "Predicted"}).melt(
+            id_vars=["category", "trending_month"], value_vars=["Actual", "Predicted"],
+            var_name="Type", value_name="Count"
+        )
+        import calendar
+        melted_fit["Month"] = melted_fit["trending_month"].apply(lambda m: calendar.month_abbr[int(m)])
+
+        fig_fit = px.line(melted_fit.sort_values(["category", "trending_month"]),
+                          x="Month", y="Count", color="Type",
+                          facet_col="category", facet_col_wrap=3,
+                          markers=True,
+                          color_discrete_map={"Actual": "#6C63FF", "Predicted": "#FF6584"})
         
-        col_g1, col_g2 = st.columns(2)
-        with col_g1:
-            v_l_corr = thumbnail_data["level_2_diagnostic"].get("view_like_correlation", 0)
-            fig_gauge1 = go.Figure(go.Indicator(
-                mode = "gauge+number",
-                value = v_l_corr,
-                title = {'text': "Content Match (View-Like Corr)"},
-                gauge = {'axis': {'range': [-1, 1]}, 'bar': {'color': "#2ecc71"}}
+        # Clean up facet annotations (remove "category=" prefix)
+        fig_fit.for_each_annotation(lambda a: a.update(text=a.text.split("=")[-1]))
+        fig_fit.update_layout(height=450, legend_title="")
+        st.plotly_chart(fig_fit, use_container_width=True)
+
+    # ── Confidence band forecast ─────────────────────────────────────────────
+    if not forecast.empty and "ci_lower" in forecast.columns:
+        st.subheader("🗓 3-Month Forecast with Confidence Bands — May · Jun · Jul 2026")
+        st.caption("Shaded area = ±1.5σ confidence band from Ridge regression residuals. Higher = more predicted trending videos.")
+
+        months = sorted(forecast["forecast_month"].unique(),
+                        key=lambda x: ["May 2026","June 2026","July 2026"].index(x) if x in ["May 2026","June 2026","July 2026"] else 99)
+        cats   = forecast["category"].unique()
+        colors = {c: PALETTE[i % len(PALETTE)] for i, c in enumerate(cats)}
+
+        # One chart per forecast month showing CI bars
+        tab_cols = st.columns(len(months))
+        for col, m in zip(tab_cols, months):
+            sub = forecast[forecast["forecast_month"] == m].sort_values(
+                "predicted_video_count", ascending=True)
+            fig_ci = go.Figure()
+            fig_ci.add_trace(go.Bar(
+                x=sub["predicted_video_count"], y=sub["category"],
+                orientation="h",
+                marker_color=[colors[c] for c in sub["category"]],
+                error_x=dict(
+                    type="data",
+                    symmetric=False,
+                    array=(sub["ci_upper"] - sub["predicted_video_count"]).tolist(),
+                    arrayminus=(sub["predicted_video_count"] - sub["ci_lower"]).tolist(),
+                    color="rgba(255,255,255,0.6)"
+                ),
+                name=m
             ))
-            fig_gauge1.update_layout(height=300)
-            st.plotly_chart(fig_gauge1, use_container_width=True)
+            fig_ci.update_layout(height=360, title=m, showlegend=False,
+                                  xaxis_title="Predicted Videos")
+            col.plotly_chart(fig_ci, use_container_width=True)
+
+        # Annual events callouts
+        st.subheader("📌 Annual Events Influencing Forecasts")
+        event_rows = forecast[forecast["annual_event"] != ""][["forecast_month","category","annual_event","predicted_video_count"]]
+        if not event_rows.empty:
+            ev_cols = st.columns(3)
+            for i, (_, r) in enumerate(event_rows.iterrows()):
+                ev_cols[i % 3].info(f"**{r['forecast_month']}** · {r['category']}\n\n_{r['annual_event']}_\n\nPredicted: **{int(r['predicted_video_count'])}** videos")
+
+        # Summary forecast line chart
+        st.subheader("📈 Forecast Trendline")
+        fig_fhm = px.line(forecast.sort_values(["month_num", "category"]),
+                          x="forecast_month", y="predicted_video_count", color="category",
+                          markers=True, color_discrete_sequence=PALETTE,
+                          labels={"forecast_month": "Month", "predicted_video_count": "Predicted Videos", "category": ""})
+        fig_fhm.update_layout(height=360)
+        st.plotly_chart(fig_fhm, use_container_width=True)
+
+# =============================================================================
+# STAGE 4 – PRESCRIPTIVE
+# =============================================================================
+elif stage == "4 · Prescriptive":
+    stage_header("🎯 Prescriptive Analytics",
+                 "What should you do? — opportunity scores, thumbnail quality, best posting month")
+
+    opp      = read_gold("prescriptive/category_opportunity")
+    recs     = read_gold("prescriptive/thumbnail_recommendations")
+    best_m   = read_gold("prescriptive/best_posting_month")
+
+    if not opp.empty:
+        # Top-3 callouts first — most actionable
+        top3 = opp.head(3)
+        st.markdown("### 🥇 Top Categories to Target Right Now")
+        cols_t = st.columns(3)
+        medals = ["🥇","🥈","🥉"]
+        for col, medal, (_, row) in zip(cols_t, medals, top3.iterrows()):
+            col.success(f"{medal} **{row['category']}**\n\n"
+                        f"Opportunity Score: **{row['opportunity_score']:.2f}**\n\n"
+                        f"Avg Engagement: **{row['avg_engagement']*100:.2f}%**\n\n"
+                        f"Avg Views: **{int(row['avg_views']):,}**")
+
+        st.subheader("🏆 Full Category Opportunity Landscape")
+        st.caption("Opportunity = (engagement rank + volume rank) / 2. Bubble size = video count.")
+        c1, c2 = st.columns(2)
+        with c1:
+            fig_opp = px.bar(opp.sort_values("opportunity_score", ascending=True),
+                             x="opportunity_score", y="category", orientation="h",
+                             color="opportunity_score", color_continuous_scale="Viridis",
+                             labels={"opportunity_score":"Opportunity Score","category":""})
+            fig_opp.add_vline(x=0.5, line_dash="dash", line_color="white", opacity=0.4,
+                              annotation_text="Threshold")
+            fig_opp.update_layout(height=380)
+            st.plotly_chart(fig_opp, use_container_width=True)
+        with c2:
+            fig_opp2 = px.scatter(opp, x="avg_engagement", y="avg_views",
+                                  size="video_count", color="opportunity_score",
+                                  color_continuous_scale="Viridis",
+                                  hover_name="category",
+                                  hover_data={"video_count":True,"opportunity_score":":.2f"},
+                                  labels={"avg_engagement":"Avg Engagement",
+                                          "avg_views":"Avg Views",
+                                          "opportunity_score":"Opportunity"})
+            fig_opp2.update_layout(height=380)
+            st.plotly_chart(fig_opp2, use_container_width=True)
+
+    # Thumbnail parallel coordinates — compare all quality attributes at once
+    thumb_corr = read_gold("diagnostic/thumbnail_category_correlation")
+    if not thumb_corr.empty:
+        st.subheader("🖼 Thumbnail Quality Profile — Radar Charts")
+        st.caption("Visual footprint of high-performing thumbnails. Different categories demand different visual styles.")
+        
+        # Melt dataframe for polar plotting
+        melted_thumb = thumb_corr.melt(
+            id_vars=["category", "avg_engagement"], 
+            value_vars=["brightness_avg", "contrast_avg", "colorfulness_avg"],
+            var_name="Attribute", value_name="Score"
+        )
+        melted_thumb["Attribute"] = melted_thumb["Attribute"].replace({
+            "brightness_avg": "Brightness",
+            "contrast_avg": "Contrast",
+            "colorfulness_avg": "Colorfulness"
+        })
+
+        fig_pc = make_subplots(rows=2, cols=3, specs=[[{'type': 'polar'}]*3]*2, 
+                               subplot_titles=GROUPED_CATEGORIES)
+        
+        for i, cat in enumerate(GROUPED_CATEGORIES):
+            row = (i // 3) + 1
+            col = (i % 3) + 1
+            cat_data = melted_thumb[melted_thumb["category"] == cat]
+            if cat_data.empty: continue
             
-        with col_g2:
-            click_corr = thumbnail_data["level_2_diagnostic"].get("clickbait_thumbnail_correlation", 0)
-            fig_gauge2 = go.Figure(go.Indicator(
-                mode = "gauge+number",
-                value = 0.568,
-                title = {'text': "Clickbait Factor"},
-                gauge = {'axis': {'range': [-1, 1]}, 'bar': {'color': "#e74c3c"}}
-            ))
-            fig_gauge2.update_layout(height=300)
-            st.plotly_chart(fig_gauge2, use_container_width=True)
+            # Close the radar loop by repeating the first element
+            r_vals = cat_data["Score"].tolist()
+            theta_vals = cat_data["Attribute"].tolist()
+            r_vals.append(r_vals[0])
+            theta_vals.append(theta_vals[0])
+            
+            fig_pc.add_trace(go.Scatterpolar(
+                r=r_vals, theta=theta_vals, fill='toself', name=cat,
+                line_color=PALETTE[i % len(PALETTE)], opacity=0.7
+            ), row=row, col=col)
+            
+        fig_pc.update_layout(height=500, showlegend=False)
+        fig_pc.update_polars(radialaxis=dict(range=[0, 0.9], showticklabels=False))
+        st.plotly_chart(fig_pc, use_container_width=True)
 
-        st.divider()
-
-        # ==========================================
-        # 3. PREDICTIVE ANALYTICS (What will happen?)
-        # ==========================================
-        st.subheader("3. Predictive Analytics")
-        st.caption("Machine learning forecast of engagement based on visual features.")
+    if not best_m.empty:
+        st.subheader("📅 Engagement Trends (Best Time to Post)")
+        st.caption("Average engagement rate per category across months. The highest peak represents the best time to post.")
         
-        pred_df = pd.DataFrame(thumbnail_data.get("level_3_predictive", []))
-        if not pred_df.empty:
-            fig_pred = px.scatter(pred_df, x="view_count_feature", y="like_count", 
-                                  size="prediction", color="prediction",
-                                  hover_data=["prediction"], trendline="ols",
-                                  labels={"view_count_feature": "View Intensity", "like_count": "Actual Likes"},
-                                  color_continuous_scale="Viridis", template="plotly_dark")
-            st.plotly_chart(fig_pred, use_container_width=True)
-
-        st.divider()
-
-        # ==========================================
-        # 4. PRESCRIPTIVE ANALYTICS (What should we do?)
-        # ==========================================
-        st.subheader("4. Prescriptive Analytics")
-        st.caption("Data-driven strategic recommendations.")
+        # Calculate full monthly engagement matrix from raw data for smooth curves
+        monthly_eng = raw.groupby(["category", "trending_month"], as_index=False)["engagement_rate"].mean()
+        import calendar as _cal
+        monthly_eng["month_name"] = monthly_eng["trending_month"].apply(lambda m: _cal.month_abbr[int(m)])
         
-        st.success(f" **Actionable Strategy:** {thumbnail_data['level_4_prescriptive'].get('action', 'N/A')}")
-        st.info(f" **Best Time to Post:** {thumbnail_data['level_4_prescriptive'].get('optimal_hour', 'N/A')}:00")
+        fig_bm = px.line(monthly_eng.sort_values(["trending_month", "category"]),
+                         x="month_name", y="engagement_rate", color="category",
+                         markers=True, line_shape="spline",
+                         color_discrete_sequence=PALETTE,
+                         labels={"month_name": "Month", "engagement_rate": "Average Engagement Rate", "category": ""})
+        
+        fig_bm.update_layout(height=450, hovermode="x unified")
+        st.plotly_chart(fig_bm, use_container_width=True)
+
+    # if not recs.empty:
+    #     st.subheader("🖼 Thumbnail Quality Recommendations per Category")
+    #     for _, row in recs.iterrows():
+    #         with st.expander(f"🎨 {row['category']}"):
+    #             r1, r2, r3 = st.columns(3)
+    #             r1.metric("Brightness", row["recommended_brightness"])
+    #             r2.metric("Contrast",   row["recommended_contrast"])
+    #             r3.metric("Colorfulness", row["recommended_colorfulness"])
+    #             st.info(f"💡 **Tip:** {row['tip']}")
+    #             # Show correlation image if available
+    #             cat_dir = CATEGORY_DIRS.get(row["category"])
+    #             if cat_dir and (cat_dir / "thumbnail_engagement_correlation.jpeg").exists():
+    #                 st.image(str(cat_dir / "thumbnail_engagement_correlation.jpeg"),
+    #                          caption=f"{row['category']} Thumbnail Correlation",
+    #                          use_column_width=True)
+
+    # Global thumbnail averages reminder
+    st.subheader("📊 Global Thumbnail Averages Reference")
+    ti1, ti2 = st.columns(2)
+    img1 = NEW_DATA / "Thumbnail_Attributes_Averages.jpeg"
+    img2 = NEW_DATA / "Thumbnail_Engagement_Averages.jpeg"
+    if img1.exists(): ti1.image(str(img1), caption="Attribute Averages", use_column_width=True)
+    if img2.exists(): ti2.image(str(img2), caption="Engagement Averages", use_column_width=True)
 
 st.markdown("---")
-st.caption("Dashboard generated by Antigravity Dashboard Engine. Run with: `streamlit run src/Dashboard/app_dashboard.py`")
+# st.caption("Kafka → Bronze → Gold (Delta Lake) · Dashboard by YouTube Trending Analytics Engine")
