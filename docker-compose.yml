@@ -67,13 +67,98 @@ services:
     depends_on:
       - spark-processor
   
-  mongodb:
+  # MongoDB Distributed Replica Set (3 nodes)
+  mongodb-1:
     image: mongo:latest
-    container_name: youtube-mongodb
+    container_name: youtube-mongodb-1
     ports:
       - "27017:27017"
     environment:
       MONGO_INITDB_ROOT_USERNAME: admin
       MONGO_INITDB_ROOT_PASSWORD: password
+    command: mongod --replSet rs0 --bind_ip_all --keyFile /keyfile/mongodb.key --auth
+    volumes:
+      - mongo-1-data:/data/db
+      - ./mongo-keyfile:/keyfile:ro
     networks:
-      - default 
+      - default
+    healthcheck:
+      test: echo 'db.runCommand("ping").ok' | mongosh localhost:27017/admin -u admin -p password
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  mongodb-2:
+    image: mongo:latest
+    container_name: youtube-mongodb-2
+    ports:
+      - "27018:27017"
+    environment:
+      MONGO_INITDB_ROOT_USERNAME: admin
+      MONGO_INITDB_ROOT_PASSWORD: password
+    command: mongod --replSet rs0 --bind_ip_all --keyFile /keyfile/mongodb.key --auth
+    volumes:
+      - mongo-2-data:/data/db
+      - ./mongo-keyfile:/keyfile:ro
+    networks:
+      - default
+    depends_on:
+      - mongodb-1
+    healthcheck:
+      test: echo 'db.runCommand("ping").ok' | mongosh localhost:27017/admin -u admin -p password
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  mongodb-3:
+    image: mongo:latest
+    container_name: youtube-mongodb-3
+    ports:
+      - "27019:27017"
+    environment:
+      MONGO_INITDB_ROOT_USERNAME: admin
+      MONGO_INITDB_ROOT_PASSWORD: password
+    command: mongod --replSet rs0 --bind_ip_all --keyFile /keyfile/mongodb.key --auth
+    volumes:
+      - mongo-3-data:/data/db
+      - ./mongo-keyfile:/keyfile:ro
+    networks:
+      - default
+    depends_on:
+      - mongodb-1
+    healthcheck:
+      test: echo 'db.runCommand("ping").ok' | mongosh localhost:27017/admin -u admin -p password
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # Replica Set Initializer
+  mongodb-init:
+    image: mongo:latest
+    container_name: youtube-mongodb-init
+    depends_on:
+      mongodb-1:
+        condition: service_healthy
+      mongodb-2:
+        condition: service_healthy
+      mongodb-3:
+        condition: service_healthy
+    networks:
+      - default
+    command: >
+      mongosh --host mongodb-1:27017 -u admin -p password --eval
+      'rs.initiate({
+        _id: "rs0",
+        members: [
+          {_id: 0, host: "mongodb-1:27017"},
+          {_id: 1, host: "mongodb-2:27017"},
+          {_id: 2, host: "mongodb-3:27017"}
+        ]
+      })'
+    volumes:
+      - .:/app
+
+volumes:
+  mongo-1-data:
+  mongo-2-data:
+  mongo-3-data:

@@ -17,14 +17,14 @@ load_dotenv()
 API_KEY = os.getenv("YOUTUBE_API_KEY")
 if not API_KEY:
     raise EnvironmentError("YOUTUBE_API_KEY environment variable is required")
-MONGO_URI = os.getenv("MONGO_URI", "mongodb://admin:password@youtube-mongodb:27017/")
+MONGO_URI = os.getenv("MONGO_URI", "mongodb://admin:password@mongodb-1:27017,mongodb-2:27017,mongodb-3:27017/?replicaSet=rs0&authSource=admin")
 try:
     mongo_client = MongoClient(MONGO_URI, serverSelectionTimeoutMS=5000)
     db = mongo_client["youtube_big_data"]
     mongo_client.server_info() # Test connection
-    logging.info("Connected to MongoDB successfully.")
+    logging.info("Connected to MongoDB Replica Set successfully.")
 except Exception as e:
-    logging.error(f"Could not connect to MongoDB: {e}")
+    logging.error(f"Could not connect to MongoDB Replica Set: {e}")
     raise
 
 youtube = build("youtube", "v3", developerKey=API_KEY)
@@ -270,22 +270,24 @@ if __name__ == "__main__":
     insert_into_mongodb(search_df, "search_raw")
 
     # 3. COMMENTS
-    logging.info("Collecting comments for all trending and searched videos...")
+    logging.info(f"Collecting comments for videos")
     comments_list = []
     comment_video_ids = list(dict.fromkeys(trending_ids + list(all_search_video_ids)))
-    for vid in comment_video_ids:
-        c_df = get_video_comments(vid, max_results=50)
-        if not c_df.empty: comments_list.append(c_df)
+    
+    for index, vid in enumerate(comment_video_ids):
+        if index % 10 == 0:
+            logging.info(f"Progress: Fetching comments for video {index + 1} of {len(comment_video_ids)}...")
+            
+        try:
+            c_df = get_video_comments(vid, max_results=50)
+            if not c_df.empty: 
+                comments_list.append(c_df)
+        except Exception as e:
+            logging.warning(f"Timeout/Error on video {vid}, skipping...")
+            continue
     
     if comments_list:
         comments_df = pd.concat(comments_list, ignore_index=True)
-        append_to_raw_store(
-            comments_df,
-            os.path.join(DATA_PATH, "comments.csv"),
-            os.path.join(DATA_PATH, "comments.json"),
-            dedupe_cols=["video_id", "author", "comment_text"],
-        )
-    
-    insert_into_mongodb(comments_df, "comments_raw")
+        insert_into_mongodb(comments_df, "comments_raw")
 
     logging.info("Successfully collected metadata and binary thumbnails.")
