@@ -16,3 +16,5 @@ pillow
 opencv-python
 deltalake
 pymongo
+matplotlib
+seaborn
